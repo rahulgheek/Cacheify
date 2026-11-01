@@ -201,8 +201,12 @@ async function execute(namespace, command, args) {
   const redis = getClient();
 
   if (cmd === 'KEYS') {
-    const keys = await runCommand(redis, 'KEYS', fullPattern(namespace, args[0]));
-    return (keys || []).map((key) => stripKey(namespace, key));
+    // Real KEYS is often ACL-denied for app users (e.g. botkeep: NOPERM) and
+    // it is O(N) blocking anyway, so KEYS is materialized over the same bounded
+    // SCAN loop the browse/quota paths use. Reply shape is identical: array of
+    // namespace-stripped names.
+    const names = await scanKeysByPattern(redis, fullPattern(namespace, args[0]));
+    return names.map((key) => stripKey(namespace, key));
   }
   if (cmd === 'SCAN') {
     const remapped = remapArgs(namespace, cmd, args);
@@ -280,6 +284,24 @@ async function scanNamespace(redis, pattern, stopAfter) {
     if (cursor === '0') break;
   }
   return { cursor, count };
+}
+
+/**
+ * Collect all matched key names for a full pattern over the same bounded SCAN
+ * loop (page/cursor caps identical to scanNamespace). Used by the KEYS handler
+ * so the command works for ACL users who are denied the blocking KEYS
+ * operation — SCAN is cursor-based and explicitly permitted to app users.
+ */
+async function scanKeysByPattern(redis, pattern) {
+  const seen = new Set();
+  let cursor = '0';
+  for (let page = 0; page < SCAN_MATCH_PAGES; page += 1) {
+    const reply = await runCommand(redis, 'SCAN', cursor, 'MATCH', pattern, 'COUNT', SCAN_CHUNK);
+    cursor = String(reply[0]);
+    for (const key of reply[1]) seen.add(key); // SCAN may re-serve rewritten keys
+    if (cursor === '0') break;
+  }
+  return [...seen];
 }
 
 /**

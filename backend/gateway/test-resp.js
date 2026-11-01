@@ -7,6 +7,7 @@
  * Boots the embedded-mode REST app (same pins as smoke-test.js), mints a real
  * rk_ API key, starts the gateway as a separate process against it, and speaks
  * RAW RESP bytes over TCP — exactly what redis-cli / Jedis / redis-py would do.
+ * For the same matrix against the .env REMOTE redis stack, use test-live-env.js.
  */
 
 process.env.NODE_ENV = 'development';
@@ -19,198 +20,14 @@ process.env.ADMIN_EMAIL = 'admin@example.test';
 process.env.ADMIN_PASSWORD = 'admin-password-1234';
 
 const assert = require('node:assert');
-const net = require('node:net');
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
+const { Wire, mapOf, makeSuite } = require('./wire-client');
 
-const PASS = [];
-let failed = false;
-
-function ok(name) {
-  PASS.push(name);
-  console.log(`ok - ${name}`);
-}
-
-async function step(name, fn) {
-  try {
-    await fn();
-    ok(name);
-  } catch (err) {
-    failed = true;
-    console.error(`not ok - ${name}`);
-    console.error(`    ${err.message}`);
-    const logs = global.__gwLog || [];
-    if (logs.length > 0) console.error(`    [gateway log tail]\n      ${logs.slice(-12).join('\n      ')}`);
-    const raw = global.__raw || [];
-    if (raw.length > 0) console.error(`    [wire raw tail]\n      ${raw.slice(-8).join(' | ')}`);
-  }
-}
-
-/* --------------------------------------------------------- RESP test client */
-
-class Wire {
-  constructor() {
-    this.replies = [];
-    this.waiters = [];
-    this.buffer = Buffer.alloc(0);
-    this.closed = false;
-  }
-
-  connect(port, host = '127.0.0.1') {
-    return new Promise((resolve, reject) => {
-      this.socket = net.connect(port, host, resolve);
-      this.socket.on('error', (err) => reject(err));
-      this.socket.on('data', (chunk) => {
-        if (global.__raw) global.__raw.push(chunk.toString('latin1').replace(/\r/g, '·'));
-        this.buffer = this.buffer.length === 0 ? chunk : Buffer.concat([this.buffer, chunk]);
-        this.drain();
-      });
-      this.socket.on('close', () => {
-        this.closed = true;
-        this.drain();
-      });
-      setTimeout(() => reject(new Error('connect timeout')), 5000).unref();
-    });
-  }
-
-  drain() {
-    try {
-      this.buffer = this.parse(this.buffer);
-    } catch (err) {
-      this.replies.push({ t: 'reader-error', message: String(err.message) });
-    }
-    while (this.waiters.length > 0 && this.replies.length > 0) {
-      const waiter = this.waiters.shift();
-      waiter(this.replies.shift());
-    }
-    if (this.closed && this.replies.length === 0) {
-      while (this.waiters.length > 0) this.waiters.shift()({ t: 'closed' });
-    }
-  }
-
-  read(timeoutMs = 8000) {
-    if (this.replies.length > 0) return Promise.resolve(this.replies.shift());
-    if (this.closed) return Promise.resolve({ t: 'closed' });
-    return new Promise((resolve) => {
-      this.waiters.push(resolve);
-      setTimeout(() => resolve({ t: 'timeout' }), timeoutMs).unref();
-    });
-  }
-
-  writeCmd(parts) {
-    const encoded = Buffer.from(`*${parts.length}\r\n`, 'ascii');
-    const chunks = [encoded];
-    for (const part of parts) {
-      const bytes = Buffer.from(String(part), 'utf8');
-      chunks.push(Buffer.from(`$${bytes.length}\r\n`, 'ascii'), bytes, Buffer.from('\r\n', 'ascii'));
-    }
-    this.socket.write(Buffer.concat(chunks));
-  }
-
-  /** Parse the first reply; returns REMAINING buffer. */
-  parse(buffer) {
-    if (buffer.length === 0) return buffer;
-    const kind = String.fromCharCode(buffer[0]);
-    const eol = buffer.indexOf(0x0a);
-    if (kind === '+' || kind === '-' || kind === ':' || kind === '#') {
-      if (eol === -1) return buffer;
-      const text = buffer.subarray(1, eol > 0 && buffer[eol - 1] === 0x0d ? eol - 1 : eol).toString('utf8');
-      this.replies.push(
-        kind === '+' ? { t: 'status', v: text }
-          : kind === '-' ? { t: 'error', v: text }
-            : kind === ':' ? { t: 'int', v: Number(text) }
-              : { t: 'bool', v: text === 't' },
-      );
-      return this.parse(buffer.subarray(eol + 1));
-    }
-    if (kind === '_') {
-      if (eol === -1) return buffer;
-      this.replies.push({ t: 'null' });
-      return this.parse(buffer.subarray(eol + 1));
-    }
-    if (kind === '$') {
-      if (eol === -1) return buffer;
-      const len = Number(buffer.subarray(1, eol).toString('ascii'));
-      if (len === -1) {
-        this.replies.push({ t: 'null' });
-        return this.parse(buffer.subarray(eol + 1));
-      }
-      if (buffer.length < eol + 1 + len + 2) return buffer;
-      const value = buffer.subarray(eol + 1, eol + 1 + len).toString('utf8');
-      this.replies.push({ t: 'bulk', v: value });
-      return this.parse(buffer.subarray(eol + 1 + len + 2));
-    }
-    if (kind === '*' || kind === '%') {
-      if (eol === -1) return buffer;
-      // parseNested handles the header + children atomically; restart fresh
-      // (keeping the buffer) if any child is incomplete.
-      const inner = this.parseNested(buffer);
-      if (!inner) return buffer;
-      this.replies.push(inner.value);
-      return this.parse(buffer.subarray(inner.consumed));
-    }
-    throw new Error(`unexpected reply byte ${kind}`);
-  }
-
-  /** Non-recursive-friendly inner parser: returns {value, consumed} or null. */
-  parseNested(buffer) {
-    if (buffer.length === 0) return null;
-    const kind = String.fromCharCode(buffer[0]);
-    const eol = buffer.indexOf(0x0a);
-    if (kind === '+' || kind === '-' || kind === ':' || kind === '#') {
-      if (eol === -1) return null;
-      const text = buffer.subarray(1, eol > 0 && buffer[eol - 1] === 0x0d ? eol - 1 : eol).toString('utf8');
-      return {
-        consumed: eol + 1,
-        value: kind === '+' ? { t: 'status', v: text }
-          : kind === '-' ? { t: 'error', v: text }
-            : kind === ':' ? { t: 'int', v: Number(text) }
-              : { t: 'bool', v: text === 't' },
-      };
-    }
-    if (kind === '_') {
-      if (eol === -1) return null;
-      return { consumed: eol + 1, value: { t: 'null' } };
-    }
-    if (kind === '$') {
-      if (eol === -1) return null;
-      const len = Number(buffer.subarray(1, eol).toString('ascii'));
-      if (len === -1) return { consumed: eol + 1, value: { t: 'null' } };
-      if (buffer.length < eol + 1 + len + 2) return null;
-      return { consumed: eol + 1 + len + 2, value: { t: 'bulk', v: buffer.subarray(eol + 1, eol + 1 + len).toString('utf8') } };
-    }
-    if (kind === '*' || kind === '%') {
-      if (eol === -1) return null;
-      const count = Number(buffer.subarray(1, eol).toString('ascii'));
-      // RESP3 maps carry count PAIRS = 2×count wire elements.
-      const children = kind === '%' ? count * 2 : count;
-      let cursor = eol + 1;
-      const items = [];
-      for (let i = 0; i < children; i += 1) {
-        const inner = this.parseNested(buffer.subarray(cursor));
-        if (inner === null) return null;
-        items.push(inner.value);
-        cursor += inner.consumed;
-      }
-      return { consumed: cursor, value: kind === '%' ? { t: 'map', items } : { t: 'array', items } };
-    }
-    throw new Error(`unexpected nested reply byte ${kind}`);
-  }
-
-  close() {
-    this.socket.end();
-  }
-}
-
-function mapOf(reply) {
-  const map = {};
-  for (let i = 0; i < reply.items.length; i += 2) {
-    map[reply.items[i].v] = reply.items[i + 1].v;
-  }
-  return map;
-}
-
-/* ------------------------------------------------------------------- main */
+const suite = makeSuite();
+let wireCounter = 0;
+let wire;
+let resp3Wire;
 
 async function main() {
   const { buildApp } = require('../server/app');
@@ -244,9 +61,8 @@ async function main() {
   });
   const rkKey = keyMint.json.data.plaintext;
   assert.ok(rkKey && rkKey.startsWith('rk_'), 'minted key must look like rk_');
-  ok('harness: REST control plane staged (user verified, db + rk_ key minted)');
+  suite.step && console.log('ok - harness: REST control plane staged (user verified, db + rk_ key minted)');
 
-  /* Start the gateway as a real process, edge mode (lazy AUTH verification). */
   const gateway = spawn(process.execPath, ['gateway/redis-gateway.js'], {
     env: {
       ...process.env,
@@ -264,18 +80,16 @@ async function main() {
   gateway.stderr.on('data', (chunk) => gwLog.push(`W| ${String(chunk).trim()}`));
   global.__gwLog = gwLog;
   global.__raw = [];
+
   const gwPort = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('gateway did not announce its port')), 8000);
     gateway.stdout.on('data', (chunk) => {
       const match = chunk.toString().match(/port=(\d+)/);
-      if (match) {
-        clearTimeout(timer);
-        resolve(Number(match[1]));
-      }
+      if (match) { clearTimeout(timer); resolve(Number(match[1])); }
     });
     gateway.on('exit', (code) => reject(new Error(`gateway exited early code=${code}`)));
   });
-  ok('gateway: process started (edge mode, lazy AUTH)');
+  console.log(`ok - gateway: process started on 127.0.0.1:${gwPort} (edge mode, lazy AUTH)`);
 
   try {
     await runSteps(gwPort, rkKey);
@@ -286,14 +100,12 @@ async function main() {
 
   await call('DELETE', `/api/databases/${dbId}`, { token });
   server.close();
-  console.log(`\nsuite: ${PASS.length} passed, ${failed ? '1+ FAILED' : '0 failed'}`);
-  process.exit(failed ? 1 : 0);
+  console.log(`\nsuite: ${suite.passed.length} passed, ${suite.failed ? '1+ FAILED' : '0 failed'}`);
+  process.exit(suite.failed ? 1 : 0);
 }
 
-let wireCounter = 0;
-
 async function runSteps(gwPort, rkKey) {
-  let wire;
+  const step = suite.step;
 
   await step('wire: command before AUTH → -NOAUTH and close', async () => {
     wire = new Wire();
@@ -485,7 +297,6 @@ async function runSteps(gwPort, rkKey) {
     assert.ok(flat.includes('redis') && flat.includes('7.4.2'));
   });
 
-  let resp3Wire;
   await step('wire: HELLO 3 → RESP3 map (server.redis, proto:3), null in RESP3 is _', async () => {
     resp3Wire = new Wire();
     await resp3Wire.connect(gwPort);
@@ -495,7 +306,6 @@ async function runSteps(gwPort, rkKey) {
     const fields = hello.t === 'map' ? mapOf(hello) : {};
     assert.equal(String(fields.proto), '3');
     assert.equal(fields.server, 'redis');
-    // RESP3 mode: AUTH inline for this fresh connection then verify
     resp3Wire.writeCmd(['AUTH', rkKey]);
     const auth = await resp3Wire.read();
     assert.equal(auth.t, 'status', 'HELLO negotiated AUTH must accept');
@@ -523,9 +333,8 @@ async function runSteps(gwPort, rkKey) {
   });
 
   await step('wire: batched ≥3 reads collapse to ONE /pipeline round-trip', async () => {
-    // Four batchable reads back-to-back → one pipeline call; replies stay
-    // ordered. Durable keys only (g3 expires early by design in this suite):
-    // g1 set + gated ctr (24h default TTL), gw:zzz missing ⇒ 0.
+    // Durable keys only (g3 expires early by design in this suite):
+    // g1 set, gated ctr (24h default TTL), gw:zzz missing ⇒ 0.
     wire.writeCmd(['EXISTS', 'g1']);
     wire.writeCmd(['EXISTS', 'ctr']);
     wire.writeCmd(['EXISTS', 'gw:zzz']);
