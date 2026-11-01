@@ -11,6 +11,7 @@ const { verifyToken, hashApiKey } = require('./crypto');
 const store = require('./store');
 const logger = require('./logger');
 const errors = require('./errors');
+const phaseTimer = require('./phase-timer');
 
 /* ----------------------------- Request context ---------------------------- */
 
@@ -236,6 +237,7 @@ function errorHandler(err, req, res, _next) {
     },
   };
   if (res.headersSent) return;
+  phaseTimer.setHeader(res); // error envelopes carry the same observability
   res.status(status).json(payload);
 }
 

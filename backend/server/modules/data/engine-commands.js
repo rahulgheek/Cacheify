@@ -9,7 +9,7 @@
 
 const {
   expectType, toInt, incrementString, loadSet, saveSet, loadZSet, saveZSet, globToRegExp,
-  liveRow, writeValue,
+  liveRow, writeValue, decode,
 } = require('./engine-core');
 const keyStore = require('./key-store');
 const { nowMs } = require('./engine-util');
@@ -195,7 +195,10 @@ const keyCommands = {
     const nowValue = nowMs();
     const row = await liveRow(dbId, key);
     if (!row) return 0;
-    await writeValue(dbId, key, row.type, JSON.parse(row.value), nowValue + toInt(ms), nowValue);
+    // Value round-trips DECODED (not its {"v":...} wrapper): passing the raw
+    // parsed row back through writeValue re-encodes it as {"v":{"v":...}}
+    // (double wrap), which silently corrupts every later GET/INCR on the key.
+    await writeValue(dbId, key, row.type, decode(row.type, JSON.parse(row.value)), nowValue + toInt(ms), nowValue);
     return 1;
   },
 
@@ -240,7 +243,8 @@ const keyCommands = {
     }
     await keyStore.deleteByName(dbId, newKey);
     // Rewrite under the new name, then drop the old row (unique name index).
-    await writeValue(dbId, newKey, source.type, JSON.parse(source.value), source.expires_at, nowValue);
+    // Same decode rule as pexpire: re-encoding the raw row double-wraps {"v":...}.
+    await writeValue(dbId, newKey, source.type, decode(source.type, JSON.parse(source.value)), source.expires_at, nowValue);
     await keyStore.deleteByName(dbId, key);
     return 'OK';
   },

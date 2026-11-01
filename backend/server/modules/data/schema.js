@@ -29,10 +29,25 @@ const expireSchema = z.strictObject({
   expiresInMs: z.number().int().positive().max(2_147_483_647_000),
 });
 
+/* Compound deterministic rate limiting. Rules are [key, limit, windowMs]:
+   fixed-window counters stored as ordinary (TTL-armed) keys in the database. */
+const rateLimitSchema = z.strictObject({
+  rules: z
+    .array(
+      z.tuple([
+        z.string().min(1).max(512),
+        z.number().int().min(1).max(1_000_000),
+        z.number().int().min(1000).max(86_400_000),
+      ]),
+    )
+    .min(1)
+    .max(20),
+});
+
 const listKeysQuery = z.strictObject({
   pattern: z.string().max(256).optional(),
   cursor: z.coerce.number().int().min(0).optional().default(0),
   limit: z.coerce.number().int().min(1).max(100).optional().default(25),
 });
 
-module.exports = { commandSchema: commandClean, pipelineSchema, stringPutSchema, expireSchema, listKeysQuery };
+module.exports = { commandSchema: commandClean, pipelineSchema, stringPutSchema, expireSchema, listKeysQuery, rateLimitSchema };

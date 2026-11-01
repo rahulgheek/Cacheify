@@ -19,6 +19,7 @@ const { config } = require('../../core/env');
 const { info, warn } = require('../../core/logger');
 const errors = require('../../core/errors');
 const { EngineError, validateRegistryCommand } = require('./engine');
+const phaseTimer = require('../../core/phase-timer');
 
 const PREFIX = config.redis.keyPrefix;
 const SCAN_CHUNK = 500;
@@ -73,8 +74,11 @@ function getClient() {
   if (client) return client;
   const options = {
     maxRetriesPerRequest: 2,
-    connectTimeout: 10_000,
-    commandTimeout: 10_000,
+    // Tight scheduling: a degraded provider must turn into a fast 503
+    // envelope, never a >10s held connection (the OLD 10s command budget was
+    // exactly what surfaced as client SocketTimeoutException read timeouts).
+    connectTimeout: 5_000,
+    commandTimeout: 5_000,
     retryStrategy: (times) => Math.min(times * 500, 5_000),
     // Restricted provider users (e.g. botkeep) lack INFO permission, so the
     // ready check always logs NOPERM and adds ~1s to connect. Plain roundtrip
@@ -150,11 +154,14 @@ function remapArgs(namespace, command, args) {
  * domain errors (422) and transport/connection failures into 503.
  */
 async function runCommand(redis, cmd, ...args) {
+  const redisStart = performance.now();
   try {
     return await redis.call(cmd, ...args);
   } catch (err) {
     if (err && err.name === 'ReplyError') throw new EngineError(err.message);
     throw new errors.ServiceUnavailableError(`Redis temporary failure: ${err.message}`);
+  } finally {
+    phaseTimer.track('redis', performance.now() - redisStart);
   }
 }
 

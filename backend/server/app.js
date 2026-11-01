@@ -10,6 +10,7 @@ const express = require('express');
 
 const { config } = require('./core/env');
 const middleware = require('./core/middleware');
+const phaseTimer = require('./core/phase-timer');
 
 const authRoutes = require('./modules/auth/route');
 const databasesRoutes = require('./modules/databases/route');
@@ -43,6 +44,11 @@ function buildApp() {
   const app = express();
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
+
+  // Request-scoped phase timing context: every awaited subsystem underneath
+  // (remote Redis, engine) attributes durations here; envelope + error paths
+  // surface it as Server-Timing.
+  app.use(phaseTimer.open);
 
   // API-only security headers (no HTML is served from this process; the
   // frontend ships its own strict headers from Next.js).

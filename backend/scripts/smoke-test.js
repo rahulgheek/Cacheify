@@ -479,6 +479,78 @@ async function main() {
       assert.equal(json.data.results[1].result, 1);
     });
 
+    await step('observability: Server-Timing rides every data envelope', async () => {
+      const res = await fetch(`${BASE}:${port}/api/data/${dbId}/keys/pcounter`, {
+        headers: { authorization: `Bearer ${userToken}` },
+      });
+      assert.equal(res.status, 200);
+      const timing = res.headers.get('server-timing') || '';
+      assert.ok(/^total;dur=[\d.]+/.test(timing), `Server-Timing must open with total (got: ${timing})`);
+      // Phase attribution follows the active engine: embedded suite runs the
+      // MongoDB key store (engine;dur=...); remote mode attributes redis;dur=...
+      assert.ok(/(redis|engine);dur=[\d.]+/.test(timing), `phase attribution present (got: ${timing})`);
+      assert.ok(res.headers.get('x-request-id'), 'X-Request-Id present');
+    });
+
+    await step('rate-limit: compound rules arm windows and report counters', async () => {
+      const key = 'rl:otp:44';
+      const first = await call('POST', `/api/data/${dbId}/rate-limit`, {
+        token: userToken,
+        body: { rules: [[key, 2, 60_000]] },
+      });
+      assert.equal(first.status, 200);
+      let rule = first.json.data.results[0];
+      assert.equal(rule.count, 1);
+      assert.equal(rule.allowed, true);
+      assert.equal(rule.remaining, 1);
+      assert.ok(rule.resetMs > 0, 'window armed on first hit');
+
+      const second = await call('POST', `/api/data/${dbId}/rate-limit`, {
+        token: userToken,
+        body: { rules: [[key, 2, 60_000]] },
+      });
+      rule = second.json.data.results[0];
+      assert.equal(rule.count, 2);
+      assert.equal(rule.allowed, true);
+      assert.equal(rule.remaining, 0);
+
+      const third = await call('POST', `/api/data/${dbId}/rate-limit`, {
+        token: userToken,
+        body: { rules: [[key, 2, 60_000]] },
+      });
+      rule = third.json.data.results[0];
+      assert.equal(rule.count, 3);
+      assert.equal(rule.allowed, false);
+      assert.equal(rule.remaining, 0);
+
+      // Compound: several rules in ONE call; counters independent (fresh key).
+      const compound = await call('POST', `/api/data/${dbId}/rate-limit`, {
+        token: userToken,
+        body: { rules: [['rl:a', 1, 60_000], ['rl:b', 10, 30_000], [key, 5, 60_000]] },
+      });
+      const [ra, rb, rc] = compound.json.data.results;
+      assert.equal(ra.count, 1);
+      assert.equal(rb.count, 1);
+      assert.equal(rc.count, 4, 'existing counter continued, unaffected by others');
+      assert.ok(ra.resetMs <= 60_000 && rb.resetMs <= 30_000);
+    });
+
+    await step('rate-limit: fixed window expires and re-arms', async () => {
+      // Tiny window (1s): the fresh counter expires, the next hit re-arms at 1.
+      const armed = await call('POST', `/api/data/${dbId}/rate-limit`, {
+        token: userToken,
+        body: { rules: [['rl:short:1', 5, 1000]] },
+      });
+      assert.equal(armed.json.data.results[0].allowed, true);
+      await new Promise((r) => setTimeout(r, 1100));
+      const reArmed = await call('POST', `/api/data/${dbId}/rate-limit`, {
+        token: userToken,
+        body: { rules: [['rl:short:1', 5, 1000]] },
+      });
+      assert.equal(reArmed.json.data.results[0].count, 1, 'expired counter reset to 1');
+      assert.ok(reArmed.json.data.results[0].resetMs > 0);
+    });
+
     await step('quota: value size is enforced', async () => {
       process.env.QUOTA_MAX_VALUE_BYTES = '64'; // read at user creation only; use admin patch instead
       const patched = await call('PATCH', `/api/users/${(await call('GET', '/api/auth/me', { token: userToken })).json.data.user.id}`, {

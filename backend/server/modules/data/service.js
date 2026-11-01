@@ -20,6 +20,7 @@ const errors = require('../../core/errors');
 const engine = require('./engine');
 const remoteDriver = require('./remote-driver');
 const databasesDal = require('../databases/dal');
+const phaseTimer = require('../../core/phase-timer');
 
 const IS_REMOTE = config.redis.mode === 'remote';
 
@@ -195,7 +196,9 @@ async function executeCommand(dbPublicId, user, command, args) {
   let result;
   try {
     await preflightKeyQuota(dbRecord, cmd, argv);
+    const engineStart = performance.now();
     result = await engine.executeDatabaseCommand(dbRecord.id, cmd, argv);
+    phaseTimer.track('engine', performance.now() - engineStart);
     await checkValueSizes(dbRecord, affected);
     await recordCommandUsage(user.id, cmd);
   } catch (err) {
@@ -251,6 +254,33 @@ async function executePipeline(dbPublicId, user, commands) {
   }
 }
 
+/** Compound fixed-window rate limiting on ordinary TTL-armed keys: one INCR
+    per rule (creates + stamps the platform default TTL), PEXPIRE arms the
+    user's window when the counter starts at 1, PTTL feeds resetMs. */
+async function applyRateRules(dbPublicId, user, rules) {
+  const out = [];
+  for (const [key, limit, windowMs] of rules) {
+    const rawCount = await executeCommand(dbPublicId, user, 'INCR', [key]);
+    const count = typeof rawCount === 'number' ? rawCount : Number(rawCount);
+    if (count === 1) {
+      // First hit arms the caller's window (overriding the mandatory default).
+      await executeCommand(dbPublicId, user, 'PEXPIRE', [key, String(windowMs)]);
+    }
+    const rawTtl = await executeCommand(dbPublicId, user, 'PTTL', [key]);
+    const ttl = typeof rawTtl === 'number' ? rawTtl : Number(rawTtl);
+    out.push({
+      key,
+      limit,
+      windowMs,
+      count,
+      allowed: count <= limit,
+      remaining: Math.max(0, limit - count),
+      resetMs: Number.isFinite(ttl) && ttl > 0 ? ttl : 0,
+    });
+  }
+  return out;
+}
+
 /** Browse keys with cursor pagination + optional glob pattern (bounded queries). */
 async function browseKeys(dbPublicId, user, { pattern, cursor, limit }) {
   const dbRecord = await loadAuthorizedDatabase(dbPublicId, user);
@@ -298,7 +328,9 @@ async function getKeyDetail(dbPublicId, user, keyName) {
       value: detail.value,
     };
   }
+  const storeStart = performance.now();
   const row = await keyStore.liveRow(dbRecord.id, keyName);
+  phaseTimer.track('engine', performance.now() - storeStart);
   if (!row) throw new errors.NotFoundError('Key not found');
 
   let value;
@@ -421,6 +453,7 @@ module.exports = {
   loadAuthorizedDatabase,
   executeCommand,
   executePipeline,
+  applyRateRules,
   browseKeys,
   getKeyDetail,
   deleteKey,

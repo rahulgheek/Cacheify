@@ -140,6 +140,10 @@ function resolveConfig() {
       maxAttempts: asInt(process.env.OTP_MAX_ATTEMPTS, 5),
     },
     bodyLimitBytes: asInt(process.env.BODY_LIMIT_BYTES, 256 * 1024),
+    // Per-database in-flight data-plane command cap. A saturated database
+    // answers 429 + Retry-After immediately instead of holding sockets (the
+    // queue-with-backpressure contract; no unbounded pipelined floods).
+    maxInflightPerDb: asInt(process.env.MAX_INFLIGHT_PER_DB, 24),
     bcryptCost: asInt(process.env.BCRYPT_COST, 10),
     sweepIntervalMs: asInt(process.env.SWEEP_INTERVAL_MS, 60_000),
   };
