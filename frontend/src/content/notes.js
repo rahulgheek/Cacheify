@@ -37,19 +37,19 @@ export const NOTES = [
         heading: 'Why not RESP',
         paragraphs: [
           'RESP is excellent when you control a long-lived process near the cache. It is awkward when the caller is an edge function, a scheduled job, a browser-backed tool or an AI agent that already knows how to make an HTTPS request and nothing else.',
-          'Serving RESP would also mean asking every user to open an outbound TCP port, manage client libraries and reason about connection pooling. The platform would inherit a class of support questions that have nothing to do with the data model.',
+          'Serving RESP over the same HTTPS surface would also mean asking every user to open an outbound TCP port, manage client libraries and reason about connection pooling - a class of support questions with nothing to do with the data model. That argument holds for the data plane, and the platform answers it honestly: the HTTP surface stays, and native clients get a separate RESP gateway on their own address.',
         ],
       },
       {
         heading: 'The trade-offs',
         paragraphs: [
-          'HTTP is not a drop-in replacement for RESP. This platform is not a RESP server, so native Redis clients cannot connect to it. If your code is built around RedisTemplate, ioredis or redis-py, you either keep a real Redis server or put a small HTTP store behind the interface your application already uses.',
-          'Blocking commands and pub/sub subscriptions do not fit a request/response contract. The supported surface is around sixty Redis-compatible commands across strings, lists, sets, hashes and sorted sets, plus cursor-based key browsing. Pipelines let you batch up to fifty commands in one request.',
+          'HTTP is not a drop-in replacement for RESP, so the platform stopped pretending it could be one: native Redis clients do not talk to the HTTPS API. They get their own door - a RESP gateway whose AUTH password is your database API key (redis://:<API-key>@<gateway-host>:<port>/0). RedisTemplate, ioredis and redis-py connect unmodified to the same key space, with the same command surface and the same mandatory expiry as the HTTP plane.',
+          'Blocking commands and pub/sub subscriptions do not fit either contract and stay outside the supported surface: roughly sixty Redis-compatible commands across strings, lists, sets, hashes and sorted sets, plus cursor-based key browsing. Pipelines let the HTTP plane batch up to fifty commands in one request; the RESP gateway batches consecutive pipelined reads on its own.',
         ],
         bullets: [
           'Use HTTP when the caller is short-lived, polyglot or already server-side.',
-          'Use a real Redis connection when you need RESP, blocking reads or pub/sub.',
-          'Batch with the pipeline endpoint instead of opening a socket per command.',
+          'Use the redis:// gateway connection string when a native Redis client is the cleanest path - same credential, no HTTP bridge code.',
+          'Batch with the pipeline endpoint or RESP pipelining instead of paying per command.',
         ],
       },
       {
@@ -70,7 +70,7 @@ export const NOTES = [
       },
     ],
     takeaway:
-      'HTTP keeps the integration surface small. It does not make the platform a RESP server, and pretending otherwise would produce worse code than stating the boundary.',
+      'HTTP keeps the integration surface small, and the RESP gateway keeps native clients first-class: two transports, one credential, the same stated boundary.',
   },
   {
     slug: 'mandatory-ttl',

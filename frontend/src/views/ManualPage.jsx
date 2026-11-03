@@ -9,12 +9,13 @@
 import { Icon } from '../components/common/Icon.jsx';
 import BackHomeButton from '../components/common/BackHomeButton.jsx';
 import CopyButton from '../components/features/landing/CopyButton.jsx';
-import { API_EXAMPLE_ORIGIN } from '../utils/config.js';
+import { API_EXAMPLE_ORIGIN, redisConnectionString } from '../utils/config.js';
 
 const ENV_BLOCK = `# .env - server-side only, never commit it
 CACHEIFY_BASE_URL=${API_EXAMPLE_ORIGIN}
 CACHEIFY_DB_ID=rdb_xxxxxxxx        # from the dashboard, Databases page
-CACHEIFY_API_KEY=rk_xxxxxxxx       # from the API Keys page, shown ONCE`;
+CACHEIFY_API_KEY=rk_xxxxxxxx       # from the API Keys page, shown ONCE
+REDIS_URL=${redisConnectionString()}   # native Redis clients (RESP gateway)`;
 
 const ENDPOINTS = [
   ['POST', '/api/auth/login', 'Sign in, get the session token'],
@@ -165,6 +166,36 @@ RestTemplate cacheifyRestTemplate() {
   return new RestTemplate(factory);
 }`;
 
+/* RESP gateway snippets — native Redis clients, same key as the bearer token. */
+const REDIS_SNIPPETS = [
+  {
+    label: 'redis-cli',
+    text: `# $REDIS_URL = the redis:// connection string from the database page
+redis-cli -u "$REDIS_URL" SET greeting hello
+redis-cli -u "$REDIS_URL" GET greeting
+redis-cli -u "$REDIS_URL" SET otp:user@mail.com <otp-hash> EX 300`,
+  },
+  {
+    label: 'Node.js (ioredis)',
+    text: `const Redis = require('ioredis');
+const redis = new Redis(process.env.REDIS_URL);
+
+await redis.set('greeting', 'hello');                  // inherits the 24h default TTL
+await redis.get('greeting');                           // "hello"
+await redis.setex('otp:user@mail.com', 300, otpHash);  // explicit 5 minutes`,
+  },
+  {
+    label: 'Python (redis-py)',
+    text: `import os, redis
+
+conn = redis.Redis.from_url(os.environ["REDIS_URL"], decode_responses=True)
+
+conn.set("greeting", "hello")                          # inherits the 24h default TTL
+conn.get("greeting")
+conn.setex("otp:user@mail.com", 300, otp_hash)         # explicit 5 minutes`,
+  },
+];
+
 const ERRORS = [
   ['401', 'ERR_UNAUTHORIZED', 'Missing / invalid / revoked token. Revoked keys fail with exactly this.'],
   ['403', 'ERR_FORBIDDEN', 'Permission denied: read-only key used for a write, or a key outside its database.'],
@@ -179,11 +210,11 @@ const ERRORS = [
 
 const FAQ = [
   ['Can I connect with a Redis client (redis://, ioredis, redis-py, Lettuce, StringRedisTemplate)?',
-   'No. Those clients speak the raw Redis protocol (RESP) over TCP; Cacheify speaks HTTP + JSON on an HTTP port. Point RESP clients at a real Redis server you control, or keep them and use the HTTP store implementation shown in the Spring section - both patterns work; mixing the two does not.'],
+   'Yes. Native clients speak RESP over TCP, and Cacheify runs a RESP gateway on a dedicated address for exactly that: connect to the redis:// connection string with your database API key as the AUTH password. RESP2 and RESP3 (HELLO 3) both work, the database is always db 0, and SET, INCR, EXPIRE and friends behave like real Redis. The HTTP/JSON data plane below remains the better fit for serverless and edge callers.'],
   ['Can I create a second API key for one database?',
    'No - a database has exactly one active API key at a time. A second creation attempt returns 409 ERR_CONFLICT. To rotate: revoke the existing key, then mint a new one (the database page and the API keys page both manage this).'],
   ['What is the connection string for a database?',
-   '{BASE}/api/data/{dbId} - shown on the database page with a copy action. All data calls live under it (strings/, keys/, expire, command), authorized with the database\'s single active API key as a bearer token.'],
+   'Two, one per transport, both shown on the database page with copy actions. Redis clients: redis://:<active API key>@<gateway-host>:<port>/0 - the key is the password slot and the database is always 0. HTTP callers: {BASE}/api/data/{dbId} - all data calls live under it (strings/, keys/, expire, command). The credential in both is the same single active API key.'],
   ['Are values just strings?',
    'The strings endpoint stores strings; JSON.stringify structures before storing and parse after reading. The command plane supports the wider Redis types with full engine semantics.'],
   ['I lost the API key plaintext. Now what?',
@@ -207,10 +238,27 @@ const SECTIONS = [
   },
   {
     icon: 'terminal',
-    title: 'The one rule every client must know',
+    title: 'Two ways in: HTTPS data plane or RESP gateway',
     body: [
-      'Cacheify speaks HTTP/JSON on an HTTP port. It is not a Redis protocol (RESP) server. Any HTTP client - fetch, requests, RestTemplate, Invoke-RestMethod, curl - is your Redis client. This is why the same call works identically from seven different ecosystems; the tests folder in the repository proves it live, framework by framework.',
-      'Native Redis clients (ioredis, redis-py, go-redis, Lettuce, Spring\'s RedisTemplate) open a TCP socket and speak RESP - they will not work against an HTTP endpoint. Point them at a real Redis server, or keep your code and call Cacheify through a thin store implementation (the Spring section below does exactly that).',
+      'The data plane speaks HTTP/JSON on an HTTPS port. Any HTTP client - fetch, requests, RestTemplate, Invoke-RestMethod, curl - is your Redis client against /api/data/{dbId}. This is why the same call works identically from seven different ecosystems; the tests folder in the repository proves it live, framework by framework.',
+      'Native Redis clients (redis-cli, ioredis, redis-py, go-redis, Jedis, Lettuce, Spring\'s RedisTemplate) open a raw TCP socket and speak RESP instead. For them the platform runs a dedicated RESP gateway: point the client at the redis:// connection string with your database API key as the AUTH password, and your existing code works unchanged. Same key, same command surface, same mandatory TTL policy - the section below shows how.',
+    ],
+  },
+  {
+    icon: 'cable',
+    title: 'Connect with a native Redis client (RESP gateway)',
+    body: [
+      'The RESP gateway exposes this same key space over the Redis wire protocol on its own address, separate from the HTTPS API. The AUTH password is exactly the database\'s active API key - the same rk_ token the HTTP plane uses - verified on the first data command: a dead key answers -NOAUTH and the socket closes, like a wrong password.',
+      'REDIS_URL holds the connection string; the password slot is the active API key and the database is always 0. Set NEXT_PUBLIC_GATEWAY_URL on the frontend deployment to your deployed gateway endpoint to swap the placeholder.',
+    ],
+    code: REDIS_SNIPPETS,
+    list: [
+      'Anything that speaks RESP2 or RESP3 connects: redis-cli, ioredis, redis-py, go-redis, Jedis, Lettuce. HELLO 3 upgrades the connection protocol transparently.',
+      'SELECT 0 only: one Cacheify database is one virtual Redis database, fixed by the AUTH key.',
+      'Same command surface and TTL policy as the HTTP plane - strings, counters, hashes, lists, sets, sorted sets. EX, SETEX, EXPIRE and PEXPIRE arm real server-side TTLs; plain writes inherit the 24-hour platform default.',
+      'KEYS and SCAN patterns are namespace-scoped automatically (KEYS is served over a bounded SCAN loop, never a blocking full-keyspace scan).',
+      'Unsupported verbs (MULTI/EXEC, BLPOP/BRPOP, SUBSCRIBE) answer exactly like Redis: -ERR unknown command, no partial execution.',
+      'Pipelines behave like sequential execution, and 3+ consecutive batchable reads collapse into one internal round-trip.',
     ],
   },
   {
@@ -220,7 +268,7 @@ const SECTIONS = [
       'Register: POST /api/auth/register {"email":"...","password":"..."} - then login the same way; the session token comes back in data.token.',
       'Create a database: POST /api/databases {"name":"my-db"} - you get up to five, each fully isolated and capped by quotas.',
       'Mint a scoped key: POST /api/databases/{dbId}/api-keys {"name":"my-app","permission":"read-write"} - the plaintext (rk_...) is shown once; store it in your server\'s .env. Exactly one active key per database: revoke the current key first to mint a replacement.',
-      'Use the data plane with only that key: the connection string is {BASE}/api/data/{dbId} - PUT /strings/..., GET /keys/..., as shown in the next sections. Your app never needs your account password.',
+      'Use the data plane with only that key: the connection string is {BASE}/api/data/{dbId} - PUT /strings/..., GET /keys/..., as shown in the next sections. Your app never needs your account password. Prefer a native Redis client? Skip straight to the RESP gateway section - it consumes the same key over the wire protocol.',
     ],
   },
   {
@@ -234,6 +282,7 @@ const SECTIONS = [
       'Server-side only: the API key is database-wide access for its scope. Never ship it to a browser, never commit it, never log it.',
       'The plaintext is shown exactly once at creation and stored hashed; losing it means revoking and re-minting.',
       'CACHEIFY_BASE_URL changes to your deployed origin when the platform is not on localhost.',
+      'REDIS_URL is only for native Redis clients (RESP gateway): the same rk_ key is the password slot. Skip it if you only call the HTTP plane.',
     ],
   },
   {
@@ -273,8 +322,8 @@ const SECTIONS = [
     icon: 'braces',
     title: 'Spring Boot: keep your RedisTemplate code, bridge the transport',
     body: [
-      'Spring\'s StringRedisTemplate speaks the Redis protocol over TCP - perfect against a real Redis you host yourself, but it cannot talk to an HTTP port. Your own RedisOtpStore therefore works when spring.data.redis points at a genuine Redis server, and not against Cacheify.',
-      'Because your persistence layer hides behind the OtpStore interface, the clean integration is a second @Repository for the HTTP transport with the exact same methods. Autowire one or the other by configuration; your service layer never learns about Cacheify.',
+      'Spring\'s StringRedisTemplate speaks the Redis protocol over TCP, so it has two Cacheify paths. The direct one: point spring.data.redis.url at the gateway connection string (REDIS_URL above) - the password slot is your API key, and RedisTemplate, Jedis and Lettuce all work against Cacheify with zero code changes.',
+      'The HTTP bridge below is the second path - the clean fit for callers that cannot hold a persistent socket (serverless functions, restricted egress, one-shot jobs). Because your persistence layer hides behind the OtpStore interface, autowire one or the other by configuration; your service layer never learns the difference. Both paths land in the same database with the same TTL policy.',
     ],
     code: [
       { label: 'application.properties', text: SPRING_CONFIG },
@@ -323,7 +372,8 @@ const SECTIONS = [
 
 const SECTION_IDS = {
   'What Cacheify is': 'overview',
-  'The one rule every client must know': 'http-contract',
+  'Two ways in: HTTPS data plane or RESP gateway': 'http-contract',
+  'Connect with a native Redis client (RESP gateway)': 'redis-gateway',
   'Quick start in four calls': 'quickstart',
   'Environment reference (.env)': 'environment',
   'Data-plane endpoint reference': 'endpoints',
@@ -402,13 +452,15 @@ export default function ManualPage() {
           <h1>Developer manual</h1>
           <p>
             The full contract for humans: environment variables, endpoints, TTL
-            semantics, framework recipes (including Spring Boot), errors and security.
+            semantics, native Redis clients, framework recipes (including Spring
+            Boot), errors and security.
           </p>
           <div className="docs-meta">
             <span><Icon name="send" /> HTTP + JSON</span>
+            <span><Icon name="cable" /> RESP gateway</span>
             <span><Icon name="key" /> Scoped bearer keys</span>
             <span><Icon name="clock" /> Mandatory TTL</span>
-            <span>Last reviewed October 2026</span>
+            <span>Last reviewed November 2026</span>
           </div>
         </header>
 
