@@ -63,6 +63,13 @@ const SPEC = {
       },
     },
     '/api/auth/me': { get: { summary: 'Current session user and quota (emailVerified included)', responses: { '200': { description: 'OK' } } } },
+    '/api/auth/whoami': {
+      get: {
+        summary: 'Caller identity: session user, or an rk_ key with its database scope',
+        description: 'API-key callers receive kind=apiKey plus databaseId (the key\'s own database; null for legacy unscoped keys) and permission. Used by the RESP gateway to route each AUTH\'d connection.',
+        responses: { '200': { description: 'OK' }, '401': { description: 'Unknown or revoked token' } },
+      },
+    },
     '/api/auth/otp/request': {
       post: {
         summary: 'Send the email-verification code (Brevo OTP) to the signed-in account',

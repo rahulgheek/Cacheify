@@ -1,0 +1,16 @@
+{
+    "name": "cacheify-redis-gateway",
+    "version": "1.0.0",
+    "private": true,
+    "description": "RESP (redis:// + rediss://) wire gateway in front of the Cacheify HTTPS data plane. Node stdlib only - zero npm dependencies.",
+    "main": "redis-gateway.js",
+    "license": "ISC",
+    "scripts": {
+        "start": "node redis-gateway.js",
+        "test": "node test-resp.js",
+        "test:live": "node test-live-env.js"
+    },
+    "engines": {
+        "node": ">=18"
+    }
+}

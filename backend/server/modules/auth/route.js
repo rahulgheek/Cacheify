@@ -64,6 +64,27 @@ router.get(
   },
 );
 
+/* Caller identity: a session token answers the account, and an rk_ API key
+   answers ITS OWN database scope (id + permission). The RESP gateway calls
+   this lazily on the first data command to route each AUTH'd connection to
+   the key's database - one gateway process then serves every customer. */
+router.get(
+  '/whoami',
+  attachUser,
+  requireAuth,
+  (req, res) => {
+    if (req.authKind === 'apiKey') {
+      const scope = req.user.apiKeyScope || {};
+      return ok(res, {
+        kind: 'apiKey',
+        databaseId: scope.databasePublicId, // null = legacy unscoped key
+        permission: scope.permission || 'read-write',
+      });
+    }
+    return ok(res, { kind: 'session' });
+  },
+);
+
 /* Email verification (Brevo OTP): request the code, then verify it.
    Both operate on the factory-fresh session the account already holds. */
 router.post(

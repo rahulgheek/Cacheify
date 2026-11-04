@@ -15,7 +15,7 @@ Runs on Node ≥ 18 (global `fetch`), **stdlib only**, one file, no deps.
 ## Quickstart (container = the "just works" path)
 
 ```bash
-docker build -t cacheify-redis-gateway .
+docker build -t cacheify-redis-gateway gateway/   # from the repo root (or `.` from gateway/)
 
 docker run -d --name cacheify-gw -p 6379:6379 \
   -e CACHEIFY_API_KEY=rk_xxxxxxxx \
@@ -43,11 +43,61 @@ redis-cli -u redis://localhost:6379 GET greeting
 
 ## Running outside Docker (same binary)
 
+The gateway is a top-level folder of the repository (`gateway/`) next to
+`backend/` (the Cacheify API) and `frontend/`. Either run it directly:
+
 ```bash
+cd gateway
 CACHEIFY_BASE_URL=https://cacheify.bot-keep.xyz \
 CACHEIFY_API_KEY=rk_xxx CACHEIFY_DB_ID=rdb_xxx \
-GATEWAY_BYPASS_AUTH=1 npm run gateway
+GATEWAY_BYPASS_AUTH=1 npm start
 ```
+
+or use the compatibility scripts kept on the backend root (they point at
+`../gateway/…`):
+
+```bash
+cd backend
+CACHEIFY_BASE_URL=https://cacheify.bot-keep.xyz \
+CACHEIFY_API_KEY=rk_xxx CACHEIFY_DB_ID=rdb_xxx \
+GATEWAY_BYPASS_AUTH=1 npm run gateway        # node ../gateway/redis-gateway.js
+```
+
+## Deploy on a server (no Docker)
+
+The `gateway/` folder is self-contained: plain Node >= 18, zero npm
+dependencies, nothing to install.
+
+1. **Copy only the `gateway/` folder** to the server (scp/rsync/git sparse
+   checkout), e.g. to `/srv/cacheify/gateway`.
+2. **Create the configuration** from the checked-in template:
+
+   ```bash
+   cd /srv/cacheify/gateway
+   cp .env.example .env
+   # edit .env: set CACHEIFY_BASE_URL (required for public operation),
+   # GATEWAY_HOST=0.0.0.0 and the panel-assigned GATEWAY_PORT; uncomment
+   # GATEWAY_TLS_CERT/GATEWAY_TLS_KEY to serve rediss://
+   ```
+
+   `redis-gateway.js` does not load `.env` by itself; either export the
+   variables (`set -a; . ./.env; set +a`) before starting, or put the values
+   into `ecosystem.config.js`'s `env` block for pm2.
+3. **Run it**:
+
+   ```bash
+   npm start                          # foreground: node redis-gateway.js
+   # or, for a service-managed process:
+   pm2 start ecosystem.config.js      # autorestarts, caps memory, keeps logs
+   pm2 save                           # optional: resurrect after reboots
+   ```
+
+   The startup log line shows `scheme= tls=on/off host= port= api=` — no
+   secrets. Startup fails fast (exit code 1) when `GATEWAY_BYPASS_AUTH` is
+   off and `CACHEIFY_BASE_URL` is missing, so a misconfigured public
+   deployment never comes up half-configured.
+4. Firewall the port to what your panel assigns (no other port is open), and
+   point `NEXT_PUBLIC_GATEWAY_URL=<host>:<port>` on the frontend once live.
 
 ## Environment
 
@@ -122,5 +172,6 @@ batching.
   allows only 6380, and NO bypass. Clients then use
   `redis://:rk_xxx@redis.your-domain.tld:6380/0` — the `rk_` key IS the
   password (lazy-verified against the REST plane).
-- Wire test: `npm run test:gateway` (boots the embedded REST app, mints a real
-  `rk_` key, spawns the gateway, and asserts 26 wire-level behaviors).
+- Wire test: `npm test` from `gateway/` (or `npm run test:gateway` from
+  `backend/`; both boot the embedded REST app, mint a real `rk_` key, spawn
+  the gateway, and assert the full wire-level behavior matrix).

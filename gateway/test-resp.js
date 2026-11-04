@@ -20,8 +20,15 @@ process.env.ADMIN_EMAIL = 'admin@example.test';
 process.env.ADMIN_PASSWORD = 'admin-password-1234';
 
 const assert = require('node:assert');
+const path = require('node:path');
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
+/* Cwd-independent config load: the embedded REST app sources Atlas credentials
+   from the backend/.env file, so the suite location path is pinned to the file
+   rather than to process.cwd() - letting it run from backend scripts through
+   ../gateway or directly from gateway/. Pinned process.env values in this file
+   take priority; dotenv never overrides an existing key. */
+require('../backend/node_modules/dotenv').config({ path: path.resolve(__dirname, '../backend/.env') });
 const { Wire, mapOf, makeSuite } = require('./wire-client');
 
 const suite = makeSuite();
@@ -30,8 +37,8 @@ let wire;
 let resp3Wire;
 
 async function main() {
-  const { buildApp } = require('../server/app');
-  await require('../server/core/bootstrap').seedAdmin();
+  const { buildApp } = require('../backend/server/app');
+  await require('../backend/server/core/bootstrap').seedAdmin();
   const server = buildApp().listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   const apiBase = `http://127.0.0.1:${server.address().port}`;
@@ -63,7 +70,7 @@ async function main() {
   assert.ok(rkKey && rkKey.startsWith('rk_'), 'minted key must look like rk_');
   suite.step && console.log('ok - harness: REST control plane staged (user verified, db + rk_ key minted)');
 
-  const gateway = spawn(process.execPath, ['gateway/redis-gateway.js'], {
+  const gateway = spawn(process.execPath, [path.join(__dirname, 'redis-gateway.js')], {
     env: {
       ...process.env,
       CACHEIFY_BASE_URL: apiBase,
@@ -92,19 +99,24 @@ async function main() {
   console.log(`ok - gateway: process started on 127.0.0.1:${gwPort} (edge mode, lazy AUTH)`);
 
   try {
-    await runSteps(gwPort, rkKey);
+    await runSteps(gwPort, rkKey, call, token);
   } finally {
     gateway.kill('SIGTERM');
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
 
   await call('DELETE', `/api/databases/${dbId}`, { token });
+  for (const extraId of extraDatabases) {
+    await call('DELETE', `/api/databases/${extraId}`, { token });
+  }
   server.close();
   console.log(`\nsuite: ${suite.passed.length} passed, ${suite.failed ? '1+ FAILED' : '0 failed'}`);
   process.exit(suite.failed ? 1 : 0);
 }
 
-async function runSteps(gwPort, rkKey) {
+const extraDatabases = [];
+
+async function runSteps(gwPort, rkKey, call, token) {
   const step = suite.step;
 
   await step('wire: command before AUTH → -NOAUTH and close', async () => {
@@ -341,6 +353,43 @@ async function runSteps(gwPort, rkKey) {
     wire.writeCmd(['GET', 'g1']);
     const replies = [await wire.read(), await wire.read(), await wire.read(), await wire.read()];
     assert.deepEqual(replies.map((reply) => reply.v), [1, 1, 0, 'hello-gateway']);
+  });
+
+  await step('wire: multi-tenant — customer B key routes to B\'s OWN db (whoami routing)', async () => {
+    // Mint customer B: a second database + key. The gateway process was started
+    // with ONLY customer A's CACHEIFY_DB_ID env, so routing must come from the
+    // AUTH'd key (GET /api/auth/whoami), not from the environment.
+    const db2 = await call('POST', '/api/databases', { token, body: { name: 'gateway-test-db-2' } });
+    assert.ok(db2.status === 201 || db2.status === 200,
+      `second database must be creatable (got ${db2.status}: ${JSON.stringify(db2.json && (db2.json.error || db2.json.data))})`);
+    const dbB = db2.json.data.database.id;
+    extraDatabases.push(dbB);
+    const mint2 = await call('POST', '/api/api-keys', {
+      token, body: { name: 'customer-b', databaseId: dbB, permission: 'read-write' },
+    });
+    const keyB = mint2.json.data.plaintext;
+    assert.ok(keyB && keyB.startsWith('rk_'), 'second key must be minted');
+
+    const wireB = new Wire();
+    await wireB.connect(gwPort);
+    wireB.writeCmd(['AUTH', keyB]);
+    assert.equal((await wireB.read(10_000)).t, 'status');
+    wireB.writeCmd(['SET', 'bkey', 'set-by-customer-b']);
+    const setReply = await wireB.read(10_000);
+    assert.equal(setReply.t, 'status', `SET must land in B's own db (got ${JSON.stringify(setReply)})`);
+    wireB.writeCmd(['GET', 'bkey']);
+    assert.equal((await wireB.read(10_000)).v, 'set-by-customer-b');
+
+    // Index 0 is B's own database: B sees only its own namespace.
+    wireB.writeCmd(['KEYS', '*']);
+    const keys = (await wireB.read(10_000)).items.filter((item) => item.t === 'bulk').map((item) => item.v);
+    assert.ok(keys.includes('bkey'), `B must see its own key (got ${keys.join(',')})`);
+    assert.ok(!keys.includes('g1'), 'customer B must NOT see customer A keys');
+
+    // Customer A's open connection keeps working unaffected.
+    wire.writeCmd(['EXISTS', 'g1']);
+    assert.equal((await wire.read(10_000)).v, 1);
+    wireB.close();
   });
 
   await step('wire: protocol error → -ERR Protocol error + close', async () => {

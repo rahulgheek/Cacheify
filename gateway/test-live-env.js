@@ -26,14 +26,18 @@ process.env.BREVO_API_KEY = '';
 process.env.MAIL_HOST = '';
 
 const assert = require('node:assert');
+const path = require('node:path');
 const { spawn } = require('node:child_process');
 const crypto = require('node:crypto');
-const { config } = require('../server/core/env');
+/* Cwd-independent dotenv load, as in test-resp.js: the live suite needs the
+   backend/.env stack configuration (Atlas metadata, operator Redis endpoint,
+   TLS CA) regardless of the npm script's working directory. */
+require('../backend/node_modules/dotenv').config({ path: path.resolve(__dirname, '../backend/.env') });
+const { config } = require('../backend/server/core/env');
 const { Wire, mapOf, makeSuite } = require('./wire-client');
 
 /* Sampled wire latencies (per awaited reply), reported at the end. */
-const samples = [];
-async function timedRead(wire, timeoutMs = 10_000) {
+const samples = [];async function timedRead(wire, timeoutMs = 10_000) {
   const start = Date.now();
   const reply = await wire.read(timeoutMs);
   samples.push(Date.now() - start);
@@ -53,8 +57,8 @@ async function main() {
   console.log(`mode: ${config.redis.mode}`);
   console.log(`redis: ${masked || '(embedded — .env has no REDIS_CONNECTION_STRING!)'}`);
 
-  const { buildApp } = require('../server/app');
-  await require('../server/core/bootstrap').seedAdmin();
+  const { buildApp } = require('../backend/server/app');
+  await require('../backend/server/core/bootstrap').seedAdmin();
   const server = buildApp().listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
   const apiBase = `http://127.0.0.1:${server.address().port}`;
@@ -84,7 +88,7 @@ async function main() {
   assert.ok(rkKey.startsWith('rk_'));
   console.log(`ok - harness: user verified, db ${dbId.slice(0, 12)}…, rk_ key minted`);
 
-  const gateway = spawn(process.execPath, ['gateway/redis-gateway.js'], {
+  const gateway = spawn(process.execPath, [path.join(__dirname, 'redis-gateway.js')], {
     env: {
       ...process.env,
       CACHEIFY_BASE_URL: apiBase,
@@ -114,7 +118,7 @@ async function main() {
 
   const suite = makeSuite();
   try {
-    await runSteps(suite, gwPort, rkKey);
+    await runSteps(suite, gwPort, rkKey, call, token);
   } finally {
     gateway.kill('SIGTERM');
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -123,9 +127,13 @@ async function main() {
   /* Cleanup: DELETE cascades the remote namespace (real Redis wipe) + row. */
   const del = await call('DELETE', `/api/databases/${dbId}`, { token });
   console.log(`cleanup: database delete ${del.status} deleted=${del.json?.data?.deleted}`);
+  for (const extraId of extraDatabases) {
+    const delExtra = await call('DELETE', `/api/databases/${extraId}`, { token });
+    console.log(`cleanup: extra database delete ${delExtra.status} deleted=${delExtra.json?.data?.deleted}`);
+  }
   server.close();
-  await require('../server/modules/data/remote-driver').close().catch(() => {});
-  const mongo = require('../server/modules/integrations/mongo');
+  await require('../backend/server/modules/data/remote-driver').close().catch(() => {});
+  const mongo = require('../backend/server/modules/integrations/mongo');
   await mongo.db().then((db) => db.dropDatabase()).catch((err) => console.warn(`atlas drop failed: ${err.message}`));
   await mongo.close().catch(() => {});
 
@@ -140,8 +148,9 @@ async function main() {
 
 let sharedWire;
 let resp3Wire;
+const extraDatabases = [];
 
-async function runSteps(suite, gwPort, rkKey) {
+async function runSteps(suite, gwPort, rkKey, call, token) {
   await suite.step('wire: command before AUTH → -NOAUTH and close', async () => {
     const wire = new Wire();
     await wire.connect(gwPort);

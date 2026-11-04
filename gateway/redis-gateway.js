@@ -36,9 +36,11 @@
  *     the client library's own retry policy decides.
  *
  * Env
- *   CACHEIFY_API_KEY      Bearer rk_... key (container mode)
+ *   CACHEIFY_API_KEY      Bearer rk_... key (container mode fallback/legacy keys)
  *   CACHEIFY_BASE_URL     default https://cacheify.bot-keep.xyz
- *   CACHEIFY_DB_ID        public id of the target database (index 0)
+ *   CACHEIFY_DB_ID        fallback database id for index 0 (legacy unscoped
+ *                         keys); customer keys RESOLVE THEIR OWN database via
+ *                         GET /api/auth/whoami on the first data command
  *   CACHEIFY_DB_MAP       "0=rdb_aaa,1=rdb_bbb" index→database registry
  *   GATEWAY_BYPASS_AUTH   =1 → AUTH not required (localhost container mode)
  *   GATEWAY_PORT / GATEWAY_HOST    listen endpoint (default 6379 / 127.0.0.1)
@@ -84,11 +86,6 @@ for (const pair of (process.env.CACHEIFY_DB_MAP || '').split(',').map((s) => s.t
 }
 
 const REDIS_VERSION = '7.4.2';
-/**
- * Lazy auth probe: the registry has no PING, so verification uses a GET on a
- * key that cannot exist — 200 whether nil or not, 401 only for a dead key.
- */
-const PROBE_KEY = '__cacheify__gateway__probe__';
 
 function log(...args) {
   console.log('[gateway]', ...args);
@@ -261,7 +258,7 @@ function releaseSlot() {
  * happens in the translator. Never throws for HTTP statuses — only for network
  * level problems (mapped by callers) and RateLimitedError on cooldown.
  */
-async function rest(method, dbId, apiKey, urlPath, body) {
+async function rest(method, dbId, apiKey, urlPath, body, opts = {}) {
   if (Date.now() < blockedUntil) throw new RateLimitedError();
   const slot = acquireSlot();
   if (slot) await slot;
@@ -269,7 +266,10 @@ async function rest(method, dbId, apiKey, urlPath, body) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), config.restTimeoutMs);
     try {
-      const res = await fetch(`${config.baseUrl}/api/data/${dbId}${urlPath}`, {
+      const target = opts.absolute
+        ? `${config.baseUrl}${urlPath}`
+        : `${config.baseUrl}/api/data/${dbId}${urlPath}`;
+      const res = await fetch(target, {
         method,
         signal: controller.signal,
         headers: {
@@ -280,7 +280,7 @@ async function rest(method, dbId, apiKey, urlPath, body) {
         body: body === undefined ? undefined : JSON.stringify(body),
       });
       if (process.env.GATEWAY_DEBUG === '1') {
-        console.log(`[gateway] rest ${method} ${dbId}${urlPath} -> ${res.status}`);
+        console.log(`[gateway] rest ${method} ${opts.absolute ? urlPath : `${dbId}${urlPath}`} -> ${res.status}`);
       }
       const retryAfter = Number(res.headers.get('retry-after'));
       let json = null;
@@ -337,20 +337,8 @@ async function upstream(conn, method, urlPath, body) {
   if (conn.bad) return { reply: NO_AUTH_REPLY() };
   if (!conn.apiKey) { conn.bad = true; conn.closeAfterReply = true; return { reply: NO_AUTH_REPLY() }; }
   if (!conn.verified) {
-    const dbId = resolveDb(conn);
-    if (!dbId) return { reply: er('CACHEIFY_DB_ID not configured for the selected database index') };
-    try {
-      const res = await rest('POST', dbId, conn.apiKey, '/command', { command: 'GET', args: [PROBE_KEY] });
-      if (res.status !== 200) {
-        conn.bad = true;
-        conn.closeAfterReply = true; // revoked/mistyped key: NOAUTH and close
-        return { reply: NO_AUTH_REPLY() };
-      }
-      conn.verified = true;
-    } catch (err) {
-      if (err instanceof RateLimitedError) return { reply: RATE_LIMITED() };
-      return { reply: UPSTREAM_DOWN() };
-    }
+    const reply = await lazyVerify(conn);
+    if (reply) return { reply };
   }
   const dbId = resolveDb(conn);
   if (!dbId) return { reply: er('CACHEIFY_DB_ID not configured for the selected database index') };
@@ -363,8 +351,41 @@ async function upstream(conn, method, urlPath, body) {
   }
 }
 
+/**
+ * Lazy per-connection verification AND routing: the AUTH'd rk_ key resolves
+ * to its OWN database through GET /api/auth/whoami, so ONE gateway process
+ * serves every customer (connection-scoped key -> database), instead of every
+ * connection being pinned to CACHEIFY_DB_ID. 200 kind=apiKey verifies the
+ * key and records its database; databaseId null means a legacy unscoped
+ * operator key, which keeps the env routing (CACHEIFY_DB_ID/DB_MAP).
+ * 401 / unexpected kind => dead credential: NOAUTH + close (the exact
+ * contract the old probe against CACHEIFY_DB_ID enforced).
+ */
+async function lazyVerify(conn) {
+  if (conn.verified) return null;
+  try {
+    const res = await rest('GET', '', conn.apiKey, '/api/auth/whoami', undefined, { absolute: true });
+    if (res.status === 200 && res.json && res.json.data && res.json.data.kind === 'apiKey') {
+      if (res.json.data.databaseId) conn.dbId = res.json.data.databaseId;
+      conn.verified = true;
+      return null;
+    }
+    conn.bad = true; // session token, malformed envelope, 401/403, or a dead key
+    conn.closeAfterReply = true;
+    return NO_AUTH_REPLY();
+  } catch (err) {
+    if (err instanceof RateLimitedError) return RATE_LIMITED();
+    return UPSTREAM_DOWN();
+  }
+}
+
 /** Resolve the public database id for the connection's SELECT index. */
 function resolveDb(conn) {
+  if (conn.dbId) {
+    // Per-connection routing (whoami): index 0 is the key's own database.
+    if (conn.selectedIndex === 0) return conn.dbId;
+    return dbRegistry.get(conn.selectedIndex) || null; // >0 needs operator env
+  }
   if (conn.selectedIndex === 0) return config.dbId || null;
   return dbRegistry.get(conn.selectedIndex) || null;
 }
@@ -493,19 +514,11 @@ async function translateHello(conn, args) {
     const reply = authUserPass(conn, authUsername, authPassword);
     if (reply.t === 'error') return reply; // wrong username/password shape etc.
     // Hello-AUTH verifies eagerly so the client gets a definitive failure here.
-    const dbId = resolveDb(conn);
-    if (!dbId) return er('CACHEIFY_DB_ID not configured for the selected database index');
-    try {
-      const res = await rest('POST', dbId, conn.apiKey, '/command', { command: 'GET', args: [PROBE_KEY] });
-      if (res.status !== 200) {
-        conn.bad = true;
-        conn.closeAfterReply = true;
-        return er('WRONGPASS invalid username-password pair or user is disabled.');
-      }
-      conn.verified = true;
-    } catch (err) {
-      if (err instanceof RateLimitedError) return RATE_LIMITED();
-      return UPSTREAM_DOWN();
+    const verifyReply = await lazyVerify(conn);
+    if (verifyReply) {
+      conn.bad = true;
+      conn.closeAfterReply = true;
+      return er('WRONGPASS invalid username-password pair or user is disabled.');
     }
   }
   conn.proto = proto; // replies (incl. this one) emit at the negotiated level
@@ -872,7 +885,7 @@ function startServer() {
   server.listen(config.port, config.host, () => {
     const scheme = config.tlsCert && config.tlsKey ? 'rediss' : 'redis';
     const address = server.address();
-    log(`listening scheme=${scheme} host=${config.host} port=${address.port} api=${config.baseUrl}`);
+    log(`listening scheme=${scheme} tls=${scheme === 'rediss' ? 'on' : 'off'} host=${config.host} port=${address.port} api=${config.baseUrl}`);
     log(`registry=${[...dbRegistry.entries()].map(([idx, db]) => `${idx}→${db.slice(0, 8)}…`).join(' ') || 'AUTH-keys-only'}`);
   });
   server.on('error', (err) => {
@@ -900,6 +913,17 @@ function startServer() {
 
 /* Direct run = server. Require() = library (test/integration harness). */
 if (require.main === module) {
+  // Safe-startup guard: in edge mode (per-connection AUTH routing) the gateway
+  // forwards every verify/routing call to the Cacheify data plane. Starting it
+  // publicly without an explicit base URL would silently fall back to the
+  // code default, which may not match this deployment - fail fast instead.
+  // Only a direct run of the process is guarded; library consumers (tests)
+  // configure their own base URL programmatically.
+  const viaEnv = process.env.CACHEIFY_BASE_URL;
+  if (!viaEnv && !config.bypassAuth) {
+    log('fatal: CACHEIFY_BASE_URL is not set. Public deployments must point the gateway at its data plane - set CACHEIFY_BASE_URL=https://<your-cacheify-api> (or enable loopback-only GATEWAY_BYPASS_AUTH=1 with CACHEIFY_API_KEY + CACHEIFY_DB_ID).');
+    process.exit(1);
+  }
   startServer();
 }
 

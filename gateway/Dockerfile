@@ -2,6 +2,9 @@ FROM node:22-alpine
 
 # cacheify-redis-gateway: RESP wire gateway in front of the Cacheify HTTPS
 # data plane. Runs as a non-root user; uses ONLY Node stdlib (no npm install).
+# Build context = THIS gateway/ folder (top level of the repo):
+#   docker build -t cacheify-redis-gateway gateway/        (from repo root)
+#   docker build -t cacheify-redis-gateway .               (from gateway/)
 
 WORKDIR /app
 COPY redis-gateway.js /app/redis-gateway.js
