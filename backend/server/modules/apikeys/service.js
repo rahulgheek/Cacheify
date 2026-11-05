@@ -58,6 +58,9 @@ async function revokeApiKey(publicIdValue, user, context = {}) {
   const row = await dal.findByPublicIdForUser(publicIdValue, user.id);
   if (!row) throw new errors.NotFoundError('API key not found');
   await dal.revoke(publicIdValue);
+  // Revocation must be observable immediately: drop cached key→scope
+  // resolutions so the next request re-consults the store.
+  require('../../core/middleware').bumpApiKeyCacheEpoch();
   await audit.record({
     actorUserId: user.id,
     action: 'api_key.revoke',

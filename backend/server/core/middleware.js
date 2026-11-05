@@ -86,6 +86,15 @@ async function userFromSession(token) {
 
 async function userFromApiKey(token) {
   if (!token.startsWith('rk_')) return null;
+  /* Auth-scope cache: resolving an rk_ key is three serial Mongo finds per
+     request (keys → databases → users); on a small box with remote Mongo
+     that is the bulk of per-command latency. Warm keys answer from RAM for
+     up to 30s; `bumpApiKeyCacheEpoch()` clears the cache instantly whenever
+     the control plane revokes/rotates keys. */
+  const hit = apiKeyCache.get(token);
+  const now = Date.now();
+  if (hit && hit.epoch === apiKeyCacheEpoch && hit.expires > now) return hit.principal;
+
   const apiKeys = await store.getApiKeys();
   const databases = await store.getDatabases();
   const keyDoc = await apiKeys.findOne({ key_hash: hashApiKey(token) });
@@ -98,7 +107,7 @@ async function userFromApiKey(token) {
   // Fire-and-forget last-used stamp (audit-grade telemetry, non-critical).
   apiKeys.updateOne({ _id: keyDoc._id }, { $set: { last_used_at: new Date().toISOString() } })
     .catch(() => {});
-  return {
+  const principal = {
     kind: 'apiKey',
     apiKeyId: keyDoc._id,
     user: {
@@ -121,6 +130,13 @@ async function userFromApiKey(token) {
       },
     },
   };
+  apiKeyCache.set(token, { principal, epoch: apiKeyCacheEpoch, expires: now + API_KEY_CACHE_TTL_MS });
+  if (apiKeyCache.size > 2000) {
+    for (const [key, entry] of apiKeyCache) {
+      if (entry.epoch !== apiKeyCacheEpoch || entry.expires <= Date.now()) apiKeyCache.delete(key);
+    }
+  }
+  return principal;
 }
 
 async function attachUser(req, _res, next) {
@@ -241,6 +257,20 @@ function errorHandler(err, req, res, _next) {
   res.status(status).json(payload);
 }
 
+/* ---------------------------- Api-key auth cache -------------------------- */
+
+/** token → { principal, epoch, expires }; epoch enables instant clearing. */
+const apiKeyCache = new Map();
+const API_KEY_CACHE_TTL_MS = 30_000;
+let apiKeyCacheEpoch = 0;
+
+/** Control-plane hook: flush cached key→scope resolutions so a revoked or
+    rotated key stops working immediately (see apikeys service revoke). */
+function bumpApiKeyCacheEpoch() {
+  apiKeyCacheEpoch += 1;
+  apiKeyCache.clear();
+}
+
 module.exports = {
   requestContext,
   rateLimit,
@@ -251,4 +281,5 @@ module.exports = {
   validate,
   notFoundHandler,
   errorHandler,
+  bumpApiKeyCacheEpoch,
 };

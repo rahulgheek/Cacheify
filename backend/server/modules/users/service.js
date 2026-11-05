@@ -57,6 +57,11 @@ async function updateUser(publicIdValue, patch, admin, context = {}) {
     throw new errors.ConflictError('Administrators cannot suspend their own account');
   }
   const updated = await dal.updateByPublicId(publicIdValue, patch);
+  // Plan/status changes must be visible instantly to the data plane, whose
+  // dbRecord cache carries owner quotas for the cache TTL.
+  if (['status', 'maxValueBytes', 'maxKeysPerDb', 'maxDatabases'].some((k) => k in patch)) {
+    require('../data/service').bumpDatabaseRecordCacheEpoch();
+  }
   await audit.record({
     actorUserId: admin.id,
     action: 'user.admin_update',

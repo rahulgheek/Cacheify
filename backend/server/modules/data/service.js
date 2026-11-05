@@ -97,7 +97,20 @@ async function checkValueSizes(dbRecord, keys) {
   }
 }
 
+/** Two serial Mongo finds (database + owner plans) sit on EVERY command
+    before the engine runs. A short in-process cache keeps warm commands at
+    engine-only trips. Staleness bound: plan changes, suspension, and the
+    archived/read-only state lag up to the TTL (30s) — acceptable for the
+    data plane; revocation of the calling key is handled by the middleware
+    epoch cache, not here. */
+const DB_RECORD_CACHE = new Map(); // `${user.id}:${publicId}` → { record, expires }
+const DB_RECORD_CACHE_TTL_MS = 30_000;
+
 async function loadAuthorizedDatabase(dbPublicId, user) {
+  const hit = DB_RECORD_CACHE.get(`${user.id}:${dbPublicId}`);
+  const now = Date.now();
+  if (hit && hit.epoch === dbRecordCacheEpoch && hit.expires > now) return hit.record;
+
   const dbRecord = await databasesDal.findByPublicId(dbPublicId);
   if (!dbRecord) throw new errors.NotFoundError('Database not found');
   if (dbRecord.owner_user_id !== user.id && user.role !== 'admin') {
@@ -110,7 +123,7 @@ async function loadAuthorizedDatabase(dbPublicId, user) {
   if (owner.status !== 'active') {
     throw new errors.ForbiddenError('Owner account is suspended');
   }
-  return {
+  const record = {
     id: dbRecord.id,
     public_id: dbRecord.public_id,
     namespace: dbRecord.namespace,
@@ -123,12 +136,34 @@ async function loadAuthorizedDatabase(dbPublicId, user) {
       max_databases: owner.max_databases,
     },
   };
+  DB_RECORD_CACHE.set(`${user.id}:${dbPublicId}`, {
+    record,
+    epoch: dbRecordCacheEpoch,
+    expires: now + DB_RECORD_CACHE_TTL_MS,
+  });
+  if (DB_RECORD_CACHE.size > 1000) {
+    for (const [key, entry] of DB_RECORD_CACHE) {
+      if (entry.expires <= Date.now()) DB_RECORD_CACHE.delete(key);
+    }
+  }
+  return record;
 }
 
 function requireActive(dbRecord) {
   if (dbRecord.status !== 'active') {
     throw new errors.ConflictError('Database is archived and read-only');
   }
+}
+
+/** Epoch for the authorized-database cache: a control-plane change (owner
+    plan patch, account suspension, database archive/name change) bumps it,
+    so the next command re-consults Mongo instead of serving a stale record
+    for up to the TTL. Cheap: intentional, rarely fired. */
+let dbRecordCacheEpoch = 0;
+
+function bumpDatabaseRecordCacheEpoch() {
+  dbRecordCacheEpoch += 1;
+  DB_RECORD_CACHE.clear();
 }
 
 /* ---------------------------------------------------------------- */
@@ -191,18 +226,21 @@ async function executeCommand(dbPublicId, user, command, args) {
   /* Snapshot the affected keys first so a post-write quota violation (or a
      domain error mid-command) restores the exact prior state — the atomicity
      the old transactional store provided, on MongoDB. */
-  const affected = affectedKeyNames(cmd, argv);
-  const snapshot = await keyStore.snapshotKeys(dbRecord.id, affected);
+  const isWrite = WRITE_COMMANDS.has(cmd);
+  const affected = isWrite ? affectedKeyNames(cmd, argv) : [];
+  const snapshot = isWrite ? await keyStore.snapshotKeys(dbRecord.id, affected) : null;
   let result;
   try {
-    await preflightKeyQuota(dbRecord, cmd, argv);
+    if (isWrite) await preflightKeyQuota(dbRecord, cmd, argv);
     const engineStart = performance.now();
     result = await engine.executeDatabaseCommand(dbRecord.id, cmd, argv);
     phaseTimer.track('engine', performance.now() - engineStart);
-    await checkValueSizes(dbRecord, affected);
-    await recordCommandUsage(user.id, cmd);
+    if (isWrite) await checkValueSizes(dbRecord, affected);
+    // Usage tracking must never sit in the command's critical path: the
+    // response goes out now, the counter increments a tick later.
+    void recordCommandUsage(user.id, cmd);
   } catch (err) {
-    await keyStore.restoreSnapshot(snapshot);
+    if (isWrite) await keyStore.restoreSnapshot(snapshot);
     throw err;
   }
   return result;
@@ -245,7 +283,7 @@ async function executePipeline(dbPublicId, user, commands) {
     }
     await checkValueSizes(dbRecord, affectedAll);
     for (const item of normalized) {
-      await recordCommandUsage(user.id, item.command);
+      void recordCommandUsage(user.id, item.command);
     }
     return results;
   } catch (err) {
@@ -451,6 +489,7 @@ async function getCommandUsage(userId, days = 7) {
 
 module.exports = {
   loadAuthorizedDatabase,
+  bumpDatabaseRecordCacheEpoch,
   executeCommand,
   executePipeline,
   applyRateRules,

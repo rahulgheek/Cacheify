@@ -105,6 +105,11 @@ async function updateDatabase(publicIdValue, patch, user, context = {}) {
     }
   }
   const updated = await dal.update(publicIdValue, patch);
+  // Status (archive → read-only) and name changes must be instantly visible
+  // to the data plane's dbRecord cache.
+  if ('status' in patch || 'name' in patch) {
+    require('../data/service').bumpDatabaseRecordCacheEpoch();
+  }
   await audit.record({
     actorUserId: user.id,
     action: 'database.update',
