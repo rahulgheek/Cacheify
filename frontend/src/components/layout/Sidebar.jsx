@@ -38,7 +38,7 @@ export default function Sidebar({ open = false, onNavigate = () => {} }) {
   ];
 
   const resources = [
-    { href: Routes.manual, label: 'Documentation', icon: 'menu-book' },
+    { href: Routes.docs, label: 'Documentation', icon: 'menu-book' },
     { href: Routes.privacy, label: 'Privacy', icon: 'shield-lock' },
   ];
 

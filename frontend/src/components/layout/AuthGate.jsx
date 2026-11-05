@@ -35,7 +35,7 @@ const CONSOLE_PAGES = new Set([
   'admin',
 ]);
 
-const INFO_PAGES = new Set(['manual', 'privacy', 'blog', 'blogPost']);
+const INFO_PAGES = new Set(['manual', 'privacy', 'blog', 'blogPost', 'docs', 'docsPage']);
 
 /* False on the server, true after hydration — without a setState effect. */
 const subscribeHydration = () => () => {};

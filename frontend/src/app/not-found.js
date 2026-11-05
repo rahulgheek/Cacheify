@@ -22,7 +22,7 @@ export default function NotFound() {
               <Icon name="grid-1x2" />
               Back to overview
             </Link>
-            <Link href="/manual" className="btn btn-secondary">
+            <Link href="/docs" className="btn btn-secondary">
               <Icon name="menu-book" />
               Documentation
             </Link>

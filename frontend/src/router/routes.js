@@ -12,6 +12,8 @@ export const Routes = {
   admin: '/admin',
   privacy: '/privacy',
   manual: '/manual',
+  docs: '/docs',
+  docsPage: '/docs/:slug',
   blog: '/blog',
   blogPost: '/blog/:slug',
 };
@@ -22,6 +24,8 @@ export const routeTable = [
   { pattern: Routes.verify, page: 'verify', access: 'user' },
   { pattern: Routes.privacy, page: 'privacy', access: 'public' },
   { pattern: Routes.manual, page: 'manual', access: 'public' },
+  { pattern: Routes.docs, page: 'docs', access: 'public' },
+  { pattern: Routes.docsPage, page: 'docsPage', access: 'public' },
   { pattern: Routes.blog, page: 'blog', access: 'public' },
   { pattern: Routes.blogPost, page: 'blogPost', access: 'public' },
   { pattern: Routes.databases, page: 'databases', access: 'user' },

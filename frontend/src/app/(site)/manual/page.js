@@ -1,11 +1,10 @@
-import ManualPage from '../../../views/ManualPage.jsx';
+import { redirect } from 'next/navigation';
 
-export const metadata = {
-  title: 'Developer manual — Cacheify',
-  description:
-    'The full Cacheify contract: environment variables, HTTP data-plane endpoints, TTL semantics, framework recipes, error codes and security.',
-};
-
-export default function Page() {
-  return <ManualPage />;
+/**
+ * The manual was split into the multi-page /docs section (November 2026).
+ * Old /manual links (bookmarks, docs, footer history) keep working by
+ * redirecting to the docs hub.
+ */
+export default function ManualRedirectPage() {
+  redirect('/docs');
 }

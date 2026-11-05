@@ -1954,3 +1954,165 @@
   .float-note { animation: none; }
   .feature-card:hover, .check-list li > .bi, .text-link:hover .bi { transform: none; }
 }
+
+/* --------------------------------------------------------------
+   How it works (replaces the landing demo console): a CSS-only
+   continuous loop of one request traveling the path and the reply
+   returning. Static under prefers-reduced-motion.
+   -------------------------------------------------------------- */
+.howit { display: flex; flex-direction: column; gap: 40px; padding: clamp(56px, 6vw, 88px) 0; }
+
+.howit-stage {
+  position: relative;
+  border: 1px solid #1c2536;
+  background:
+    radial-gradient(560px 220px at 50% 0%, rgba(89, 209, 255, 0.055), transparent 70%),
+    var(--color-surface-dark, #0d131e);
+  border-radius: 18px;
+  padding: clamp(20px, 3vw, 34px);
+  overflow-x: auto;
+}
+
+.howit-track {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  min-width: 680px;
+  padding: 30px 6px 6px;
+}
+
+/* connector line + traveling packets */
+.howit-track::before {
+  content: '';
+  position: absolute;
+  top: 62px;
+  left: 4%;
+  right: 4%;
+  height: 2px;
+  background: linear-gradient(90deg, #2a3344, #2a3344);
+}
+
+.howit-node {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  text-align: center;
+  padding: 8px 6px 6px;
+  border-radius: 12px;
+  animation: howit-glow 7.2s infinite;
+}
+
+.howit-node-icon {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  border: 1px solid #2a3344;
+  background: #10161f;
+  color: #9fb2cc;
+  margin-bottom: 2px;
+}
+.howit-node-icon .bi { width: 17px; height: 17px; }
+
+.howit-node-kicker { font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; color: #6a7386; }
+.howit-node-code { font-family: var(--font-mono); font-size: 10.5px; color: #dbe4f5; }
+.howit-node small { font-size: 9.5px; color: #6a7386; line-height: 1.35; max-width: 14ch; }
+
+/* packets: one traveling right (request), one traveling left (reply) */
+.howit-packet {
+  position: absolute;
+  top: 53px;
+  left: 4%;
+  width: 20px;
+  height: 20px;
+  margin-top: -10px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  opacity: 0;
+  z-index: 2;
+}
+.howit-packet-request {
+  color: #071018;
+  background: #59d1ff;
+  box-shadow: 0 0 12px rgba(89, 209, 255, 0.65);
+  animation: howit-request 7.2s infinite;
+}
+.howit-packet-reply {
+  color: #dbe4f5;
+  background: #1d2534;
+  border: 1px solid #59d1ff;
+  animation: howit-reply 7.2s infinite;
+}
+
+@keyframes howit-request {
+  0%    { opacity: 0; left: 4%; }
+  6%    { opacity: 1; left: 4%; transform: scale(1); }
+  14%   { left: 27%; }
+  20%   { left: 27%; }
+  27%   { left: 50%; }
+  33%   { left: 50%; }
+  40%   { left: 73%; }
+  46%   { left: 96%; opacity: 1; }
+  54%   { left: 96%; opacity: 1; }
+  60%   { opacity: 0; left: 96%; }
+  100%  { opacity: 0; left: 4%; }
+}
+
+@keyframes howit-reply {
+  54%   { opacity: 0; left: 96%; }
+  60%   { opacity: 1; left: 96%; }
+  74%   { left: 50%; }
+  82%   { left: 27%; }
+  90%   { left: 4%; opacity: 1; }
+  96%   { opacity: 0; left: 4%; }
+  100%  { opacity: 0; left: 4%; }
+}
+
+/* sequential node glows, synced with the packet */
+@keyframes howit-glow {
+  0%, 100%   { background: transparent; }
+  7%, 13%    { background: rgba(89, 209, 255, 0.09); }   /* node 1 during request */
+  15%, 20%   { background: rgba(89, 209, 255, 0.09); }   /* node 2 */
+  28%, 33%   { background: rgba(89, 209, 255, 0.09); }   /* node 3 (checks) */
+  41%, 46%   { background: rgba(89, 209, 255, 0.09); }   /* node 4 */
+  47%, 59%   { background: rgba(89, 209, 255, 0.12); }   /* node 5 write */
+  61%, 74%   { background: rgba(89, 209, 255, 0.09); }   /* node 5 -> reply */
+  83%, 91%   { background: rgba(89, 209, 255, 0.09); }   /* node 1 reply */
+}
+
+.howit-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 18px;
+}
+.howit-steps li { display: flex; flex-direction: column; gap: 6px; }
+.howit-step-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #59d1ff; opacity: 0.65;
+  margin-bottom: 2px;
+}
+.howit-steps strong { font-size: 13.5px; letter-spacing: -0.01em; }
+.howit-steps p { margin: 0; font-size: 12px; line-height: 1.55; color: var(--color-text-muted); }
+
+.howit-actions { display: flex; justify-content: center; }
+
+@media (max-width: 900px) {
+  .howit-steps { grid-template-columns: 1fr 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .howit-packet { display: none; }
+  .howit-node { animation: none; }
+  .howit-step-dot { animation: none; }
+}

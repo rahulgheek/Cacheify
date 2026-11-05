@@ -1,7 +1,9 @@
 /**
  * Frontend runtime configuration.
  * The API lives on a SEPARATE origin (the Express backend in ../backend).
- * NEXT_PUBLIC_API_URL points at it — e.g. http://127.0.0.1:3000 in local dev
+ * NEXT_PUBLIC_API_URL points at it — the deployed API on
+ * https://cacheify.bot-keep.xyz (frontend UI itself runs on
+ * https://cacheify-redis-host.vercel.app).
  * (frontend/.env.local) or the deployed API on https://cacheify.bot-keep.xyz.
  * An empty value means same-origin deployment (frontend and API share a host);
  * runtime calls in services/api.js then use relative paths.

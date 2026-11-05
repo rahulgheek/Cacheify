@@ -117,14 +117,14 @@ export default function BlogPage() {
             <span className="dot" aria-hidden="true" />
             Go deeper
           </p>
-          <h2>The contract is in the manual.</h2>
+          <h2>The contract is in the docs.</h2>
           <p>
             Endpoints, TTL semantics, error codes and framework examples — including
             the Spring Boot bridge for teams keeping their RedisTemplate code.
           </p>
         </div>
         <div className="blog-cta-actions">
-          <Link href="/manual" className="btn btn-primary">
+          <Link href="/docs" className="btn btn-primary">
             Read the developer manual
             <Icon name="arrow_forward" />
           </Link>

@@ -9,6 +9,7 @@ export const ROUTES = {
   admin: '/admin',
   profile: '/profile',
   privacy: '/privacy',
+  docs: '/docs',
   manual: '/manual',
 };
 

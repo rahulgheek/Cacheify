@@ -6,16 +6,17 @@
  */
 
 import {
-  Activity, ArrowLeft, ArrowRepeat, ArrowRight, Archive, BarChart, Book, BoxArrowRight,
+  Activity, ArrowLeft, ArrowRepeat, ArrowRight, Archive, Ban, BarChart, Book, BoxArrowRight,
   BoxArrowUpRight, Braces, Calendar, CashCoin, CashStack, Check2Circle, CheckLg, ChevronDown,
-  Clipboard, Clock, Cloud, Copy, Cpu, CreditCard, Database, Diagram3, Download, Envelope, Eraser,
-  ExclamationTriangle, Eye, Gear, Globe, GraphUp, Grid1x2, Grid3x3, HandIndex, Hdd, HddNetwork,
-  Headset, Infinity as InfinityIcon, Info, InfoCircle, Inbox, Key, Layers, Lightning, Link45deg,
-  List, ListUl, Lock, PatchCheckFill, People, Person, PersonBadge, PersonCircle, PersonDash,
-  PauseCircle, Pencil, PlayCircle, Plus, PlusLg, RocketTakeoff, Robot, Save, Send, Server,
-  ShieldCheck, ShieldLock, ShieldPlus, SlashCircle, Sliders, SortNumericDown, Speedometer2,
-  Star, StarFill, Stack, Stopwatch, Table, Terminal, ToggleOn, Trash, Triangle, Type, X,
-  XCircle, XLg,
+  Clipboard, Clock, Cloud, CodeSlash, Copy, Cpu, CreditCard, CupHot, ClockHistory, Database,
+  Diagram3, Download,
+  Envelope, Eraser, ExclamationTriangle, Eye, Gear, Globe, GraphUp, Grid1x2, Grid3x3, HandIndex,
+  Hdd, HddNetwork, Headset, Infinity as InfinityIcon, Info, InfoCircle, Inbox, Key, Layers,
+  Lightning, Link45deg, List, ListUl, Lock, PatchCheckFill, People, Person, PersonBadge,
+  PersonCircle, PersonDash, PauseCircle, Pencil, Plug, PlayCircle, Plus, PlusLg, QuestionCircle,
+  Robot, RocketTakeoff, Save, Send, Server, ShieldCheck, ShieldExclamation, ShieldLock,
+  ShieldPlus, SlashCircle, Sliders, SortNumericDown, Speedometer2, Star, StarFill, Stack,
+  Stopwatch, Table, Terminal, ToggleOn, Trash, Triangle, Type, X, XCircle, XLg,
 } from 'react-bootstrap-icons';
 
 const MAP = {
@@ -40,6 +41,13 @@ const MAP = {
   'chevron-down': ChevronDown,
   'clipboard': Clipboard,
   'clock': Clock,
+  'ban': Ban,
+  'code-slash': CodeSlash,
+  'cup-hot': CupHot,
+  'clock-history': ClockHistory,
+  'question-circle': QuestionCircle,
+  'arrow-right': ArrowRight,
+  'shield-exclamation': ShieldExclamation,
   'cpu': Cpu,
   'database': Database,
   'envelope': Envelope,
@@ -64,6 +72,7 @@ const MAP = {
   'table': Table,
   'lock': Lock,
   'menu-book': Book,
+  'book': Book,
   'people': People,
   'person': Person,
   'person-circle': PersonCircle,

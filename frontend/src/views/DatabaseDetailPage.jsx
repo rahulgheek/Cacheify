@@ -2,12 +2,13 @@
 
 /**
  * Database detail page (screen archetype: Focus + Do).
- * Top: database identity + both connection strings (HTTP data plane and the
- * redis:// RESP gateway for native clients) + the database's single API key
- * (exactly one active key per database, managed in place).
+ * Top: database identity + the one redis:// connection string for native
+ * clients + the database's single API key (exactly one active key per
+ * database, managed in place).
  * Below: the key browser split view and the command console.
  */
 
+import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../components/common/Icon.jsx';
 import { Button, Spinner, Badge } from '../components/common/atoms.jsx';
@@ -27,7 +28,7 @@ import { errorToMessage, validateRequired } from '../utils/validators.js';
 import { formatBytes, formatDate } from '../utils/format.js';
 import { showToast, showErrorToast } from '../components/common/toasts.js';
 import { navigate } from '../router/navigate.js';
-import { apiOrigin, redisConnectionString } from '../utils/config.js';
+import { redisConnectionString } from '../utils/config.js';
 
 const PERMISSIONS = [
   { value: 'read-write', label: 'Read and write', hint: 'Full data access: get, set, delete, TTL.' },
@@ -317,14 +318,12 @@ export default function DatabaseDetailPage({ dbId }) {
         <div className="db-connect-grid">
           <div className="db-connect-main">
             {connectionRow('Database ID', database.id, false)}
-            {connectionRow('Connection string', `${apiOrigin()}/api/data/${dbId}`, true)}
-            {connectionRow('Auth header', 'Authorization: Bearer <your API key>', false)}
-            {connectionRow('Redis protocol', redisConnectionString('<your API key>'), true)}
+            {connectionRow('Connection string', redisConnectionString('<your API key>'), true)}
             <p className="hint">
-              Every data call goes under the connection string (strings/, keys/, expire, command). Keep the key on your server - it is full access to this database within its permission.
+              One line, one credential: point any native Redis client (redis-cli, ioredis, redis-py, Jedis, Lettuce, Spring RedisTemplate) at it. The password slot is your active API key - the same rk_ value minted on this page - and the database is always db 0.
             </p>
             <p className="hint">
-              Native Redis clients (redis-cli, ioredis, redis-py, Jedis) use the Redis row instead: the password slot is your active API key - the same rk_ value from the Auth header - and the database is always db 0.
+              Keep the key on your server - it is full access to this database within its permission. Advanced JSON-over-HTTPS callers exist as a reference form (<Link href="/docs/http-data-plane">HTTP data plane docs</Link>) but nothing in your app needs them.
             </p>
           </div>
           <div className="db-connect-side">

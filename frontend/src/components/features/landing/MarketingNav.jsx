@@ -15,42 +15,48 @@ import { apiOrigin } from '../../../utils/config.js';
 const PRODUCT = [
   {
     label: 'Serverless Redis',
-    description: 'Full Redis semantics without a server to run.',
-    href: '#features',
+    description: 'What it is and how requests flow.',
+    href: '/docs/architecture',
     icon: 'database',
   },
   {
-    label: 'Developer console',
-    description: 'Run real commands against your databases.',
-    href: '#console',
+    label: 'RESP gateway',
+    description: 'Connect Redis clients as if nothing changed.',
+    href: '/docs/redis-gateway',
+    icon: 'cable',
+  },
+  {
+    label: 'HTTP data plane',
+    description: 'Advanced reference: the JSON layer behind the gateway.',
+    href: '/docs/http-data-plane',
     icon: 'terminal',
   },
   {
-    label: 'Infrastructure',
-    description: 'The request path from HTTPS to the data plane.',
-    href: '#infrastructure',
-    icon: 'diagram-3',
-  },
-  {
-    label: 'Pricing',
-    description: 'Five databases free. No card required.',
-    href: '#pricing',
-    icon: 'cash-coin',
+    label: 'TTL policy',
+    description: 'Mandatory expiry on every key.',
+    href: '/docs/ttl-policy',
+    icon: 'clock',
   },
 ];
 
 const DEVELOPERS = [
   {
     label: 'Documentation',
-    description: 'Endpoints, TTL semantics and error codes.',
-    href: '/manual',
+    description: 'The full doc index, split by topic.',
+    href: '/docs',
     icon: 'menu-book',
   },
   {
     label: 'Quick start',
-    description: 'Three steps to your first HTTP command.',
-    href: '#quickstart',
+    description: 'First database and first command.',
+    href: '/docs/quickstart',
     icon: 'rocket_launch',
+  },
+  {
+    label: 'Errors',
+    description: 'Status codes and retry rules.',
+    href: '/docs/errors',
+    icon: 'shield-exclamation',
   },
   {
     label: 'API reference',
@@ -183,7 +189,7 @@ export default function MarketingNav() {
           <Dropdown label="Product" items={PRODUCT} />
           <Dropdown label="Developers" items={DEVELOPERS} />
           <Link href="/#pricing">Pricing</Link>
-          <Link href="/manual">Docs</Link>
+          <Link href="/docs">Docs</Link>
           <Link href="/blog">Blog</Link>
         </nav>
 
@@ -234,7 +240,7 @@ export default function MarketingNav() {
             </div>
             <div className="mobile-nav-group">
               <p className="mobile-nav-label">More</p>
-              <Link href="/manual" onClick={() => setMobileOpen(false)}>
+              <Link href="/docs" onClick={() => setMobileOpen(false)}>
                 <Icon name="menu-book" />
                 <span>Docs</span>
               </Link>

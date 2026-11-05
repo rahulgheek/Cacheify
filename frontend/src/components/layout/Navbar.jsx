@@ -23,7 +23,7 @@ function currentSection(pathname) {
   if (pathname === Routes.apiKeys) return 'API keys';
   if (pathname === Routes.profile) return 'Profile';
   if (pathname === Routes.admin) return 'Admin';
-  if (pathname === Routes.manual) return 'Documentation';
+  if (pathname === Routes.docs) return 'Documentation';
   if (pathname === Routes.privacy) return 'Privacy';
   if (pathname.startsWith(Routes.blog)) return 'Engineering notes';
   if (pathname === Routes.verify) return 'Verify email';
@@ -74,7 +74,7 @@ export default function Navbar({ showSidebar = false, onOpenNav = null, sidebarO
         </span>
 
         <div className="navbar-user">
-          <Link href={Routes.manual} className="navbar-docs">
+          <Link href={Routes.docs} className="navbar-docs">
             <Icon name="menu-book" />
             <span>Docs</span>
           </Link>

@@ -20,10 +20,11 @@ const COLUMNS = [
   {
     title: 'Developers',
     links: [
-      { label: 'Documentation', href: '/manual' },
-      { label: 'Quick start', href: '/#quickstart' },
+      { label: 'Documentation', href: '/docs' },
+      { label: 'Quick start', href: '/docs/quickstart' },
+      { label: 'Redis gateway', href: '/docs/redis-gateway' },
+      { label: 'HTTP data plane', href: '/docs/http-data-plane' },
       { label: 'API reference', href: `${apiOrigin()}/api/openapi.json`, external: true },
-      { label: 'Agent index', href: `${apiOrigin()}/llms.txt`, external: true },
     ],
   },
   {
@@ -36,12 +37,12 @@ const COLUMNS = [
     ],
   },
   {
-    title: 'Security',
+    title: 'Reference',
     links: [
-      { label: 'Tenant isolation', href: '/manual#security' },
-      { label: 'Scoped keys', href: '/manual#security' },
-      { label: 'TTL enforcement', href: '/manual#ttl-and-expiry' },
-      { label: 'Error contracts', href: '/manual#errors' },
+      { label: 'Architecture', href: '/docs/architecture' },
+      { label: 'TTL policy', href: '/docs/ttl-policy' },
+      { label: 'Error contracts', href: '/docs/errors' },
+      { label: 'FAQ', href: '/docs/faq' },
     ],
   },
 ];
@@ -82,9 +83,11 @@ export default function Footer() {
         <p>{`\u00A9 ${new Date().getFullYear()} Cacheify. Built for builders.`}</p>
         <div className="footer-legal">
           <Link href="/privacy">Privacy</Link>
-          <Link href="/manual">Documentation</Link>
+          <Link href="/docs">Documentation</Link>
           <Link href="/blog">Notes</Link>
-          <span>Made by Rahul Gheek</span>
+          <a href="mailto:rahulgheek2@gmail.com?subject=Cacheify%20-%20difficulty%20or%20feedback">
+            Face a difficulty? rahulgheek2@gmail.com
+          </a>
         </div>
       </div>
     </footer>

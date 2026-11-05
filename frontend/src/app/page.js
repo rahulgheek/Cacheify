@@ -1,17 +1,17 @@
 import Link from 'next/link';
 import '../styles/landing.css';
 import MarketingNav from '../components/features/landing/MarketingNav.jsx';
-import LandingConsole from '../components/features/landing/LandingConsole.jsx';
+import HowItWorks from '../components/features/landing/HowItWorks.jsx';
 import ServerStack from '../components/features/landing/ServerStack.jsx';
 import InfraVisual from '../components/features/landing/InfraVisual.jsx';
 import DashboardPreview from '../components/features/landing/DashboardPreview.jsx';
 import CopyButton from '../components/features/landing/CopyButton.jsx';
 import Footer from '../components/layout/Footer.jsx';
 import { Icon } from '../components/common/Icon.jsx';
-import { apiOrigin } from '../utils/config.js';
+import { redisConnectionString } from '../utils/config.js';
 
 export const metadata = {
-  title: 'Cacheify — Redis-compatible databases over HTTP',
+  title: 'Cacheify — Redis-compatible databases over one connection string',
   description:
     'Isolated Redis-compatible databases with scoped API keys, quotas and mandatory TTL expiry. Five databases free, no card required.',
 };
@@ -89,7 +89,7 @@ const COMPARISON = [
   },
   {
     capability: 'Connection',
-    cacheify: 'JSON over HTTPS',
+    cacheify: 'One redis:// string',
     selfHosted: 'Redis TCP client',
     managed: 'Redis TCP client',
   },
@@ -125,30 +125,30 @@ const STEPS = [
     title: 'Create a free account',
     description:
       'Sign up with an email and password, verify the code, then create a database. Five are included from the first minute.',
-    endpoint: 'POST /api/auth/register',
+    endpoint: 'Dashboard: Databases → New database',
     href: '/register',
     linkLabel: 'Create an account',
     icon: 'person',
   },
   {
     number: '02',
-    title: 'Issue a scoped key',
+    title: 'Mint the scoped key',
     description:
       'Open the database and create its single active key. Choose read-only or read-write; the plaintext token is shown once.',
-    endpoint: 'POST /api/api-keys',
-    href: '/api-keys',
-    linkLabel: 'Open API keys',
+    endpoint: 'Dashboard: database page → Create key',
+    href: '/docs/quickstart',
+    linkLabel: 'Read the quick start',
     icon: 'key',
   },
   {
     number: '03',
-    title: 'Send a command',
+    title: 'Connect with one line',
     description:
-      'Call the command endpoint from any server-side HTTP client. Add an expiry when a key needs to live longer than a day.',
-    endpoint: 'POST /api/data/:dbId/command',
-    href: '/manual#quickstart',
-    linkLabel: 'Read the quick start',
-    icon: 'terminal',
+      'Any native Redis client dials the redis:// string with your key as the password. Add an expiry when a key needs to live longer than a day.',
+    endpoint: 'redis-cli -u "$REDIS_URL" PING',
+    href: '/docs/redis-gateway',
+    linkLabel: 'See the gateway guide',
+    icon: 'cable',
   },
 ];
 
@@ -157,15 +157,14 @@ const PRICING_INCLUDES = [
   '10,000 keys per database',
   '512 KiB maximum value',
   'Scoped read-only or read-write keys',
-  'REST data plane and command console',
+  'Native Redis protocol with command console',
   'Mandatory TTL with per-write expiry',
   'Quotas and admin controls',
   'No credit card, no trial clock',
 ];
 
 export default function LandingPage() {
-  const origin = apiOrigin();
-  const quickCommand = `curl -X POST ${origin}/api/data/$DB_ID/command -H "Authorization: Bearer $RK_TOKEN" -H "Content-Type: application/json" -d '{"command":"PING","args":[]}'`;
+  const quickCommand = `redis-cli -u "${redisConnectionString('<your-key>')}" PING   # -> PONG`;
 
   return (
     <div className="landing">
@@ -188,9 +187,9 @@ export default function LandingPage() {
               </h1>
 
               <p className="hero-lead">
-                Cacheify gives you isolated Redis-compatible databases over a plain
-                HTTP API. Scoped keys, quotas and mandatory expiry are enforced before
-                a command ever runs. Five databases are free.
+                Cacheify gives you isolated Redis-compatible databases behind one
+                connection string. Scoped keys, quotas and mandatory expiry are
+                enforced before a command ever runs. Five databases are free.
               </p>
 
               <div className="hero-actions">
@@ -198,9 +197,9 @@ export default function LandingPage() {
                   <Icon name="bolt" />
                   Start for free
                 </Link>
-                <a href="#console" className="btn btn-secondary btn-lg">
+                <a href="#how-it-works" className="btn btn-secondary btn-lg">
                   <Icon name="play-circle" />
-                  Try the console
+                  See how it works
                 </a>
               </div>
 
@@ -229,9 +228,9 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section className="landing-section console-section" aria-label="Developer console">
+        <section className="landing-section howit-section" id="how-it-works" aria-labelledby="howit-title">
           <div className="landing-container">
-            <LandingConsole />
+            <HowItWorks />
           </div>
         </section>
 
@@ -363,8 +362,9 @@ export default function LandingPage() {
                 <h2 id="comparison-title">A different shape of Redis hosting.</h2>
               </div>
               <p className="section-lede">
-                Cacheify optimizes for a browser console, plain HTTP and strong
-                defaults. Those choices are not free — here is the honest comparison.
+                Cacheify optimizes for a browser console, the native Redis
+                protocol and strong defaults. Those choices are not free — here
+                is the honest comparison.
               </p>
             </div>
 
@@ -411,8 +411,8 @@ export default function LandingPage() {
               </p>
               <h2 id="quickstart-title">Three steps to your first key.</h2>
               <p className="section-lede">
-                No CLI, no Redis driver and no region picker. The console and your
-                application call the same endpoint.
+                No region picker, no network wiring. The dashboard sets everything
+                up, and your application connects like any other Redis client.
               </p>
             </div>
 
@@ -519,8 +519,8 @@ export default function LandingPage() {
                     <h3>Operators can connect real Redis.</h3>
                     <p>
                       A deployment can run on the embedded data plane or point at a
-                      Redis server through environment configuration. The HTTP contract
-                      stays the same.
+                      Redis server through environment configuration. The client
+                      contract stays the same.
                     </p>
                   </div>
                 </div>
@@ -564,7 +564,7 @@ export default function LandingPage() {
                   Start for free
                   <Icon name="arrow_forward" />
                 </Link>
-                <Link href="/manual" className="btn btn-dark-outline btn-lg">
+                <Link href="/docs" className="btn btn-dark-outline btn-lg">
                   Read the documentation
                 </Link>
               </div>

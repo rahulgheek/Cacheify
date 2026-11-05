@@ -108,7 +108,7 @@ export default function BlogPostPage({ note }) {
                 Start for free
                 <Icon name="arrow_forward" />
               </Link>
-              <Link href="/manual" className="btn btn-secondary">Read the manual</Link>
+              <Link href="/docs" className="btn btn-secondary">Read the docs</Link>
             </div>
           </div>
         </article>

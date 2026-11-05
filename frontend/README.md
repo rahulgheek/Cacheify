@@ -25,15 +25,25 @@ npm run build    # production build (static + dynamic [id] routes)
 
 ## Configuration
 
-Create `.env.local` (never committed):
+Deployed frontend: **https://cacheify-redis-host.vercel.app** (the API it talks
+to lives on the separate origin set below — never at the frontend URL itself).
 
-```powershell
-NEXT_PUBLIC_API_URL=http://127.0.0.1:3000
+On Vercel, set:
+
+```text
+NEXT_PUBLIC_API_URL=https://cacheify.bot-keep.xyz
+NEXT_PUBLIC_GATEWAY_URL=<gateway-host>:<gateway-port>   # once the RESP gateway is live
 ```
 
-`NEXT_PUBLIC_API_URL` is inlined at build time. An empty value means a
-same-origin deployment (frontend and API share a host). See
-`src/utils/config.js` (`API_BASE`, `apiOrigin()`).
+`NEXT_PUBLIC_*` values are inlined at build time (redeploy after changes). For
+local development, create `.env.local` (never committed):
+
+```powershell
+NEXT_PUBLIC_API_URL=http://<local-api-host>:<port>   # loopback backend on another origin
+```
+
+An empty value means a same-origin deployment (frontend and API share a host).
+See `src/utils/config.js` (`API_BASE`, `apiOrigin()`).
 
 ## Development notes
 
