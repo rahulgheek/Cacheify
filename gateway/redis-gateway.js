@@ -48,10 +48,40 @@
  *   REST_TIMEOUT_MS(5000) MAX_REST_INFLIGHT(32) MAX_QUEUE(256)
  */
 
+const fs = require('fs');
 const net = require('net');
+const path = require('path');
 const tls = require('tls');
 
 /* ------------------------------------------------------------------ config */
+
+/* Minimal stdlib .env loader: reads `.env` next to this file (resolved from
+   __dirname, not the cwd) and fills only variables NOT already present in the
+   environment - process-manager/panel-injected values always win, mirroring
+   the backend env.js contract. The file is optional; its contents are never
+   logged. Without this, `npm start` under a panel (Pterodactyl/Docker CMD)
+   runs with no dotenv step and the file stays unused. */
+function loadEnvFile() {
+  try {
+    const raw = fs.readFileSync(path.resolve(__dirname, '.env'), 'utf8');
+    for (const rawLine of raw.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const eq = line.indexOf('=');
+      if (eq <= 0) continue;
+      const key = line.slice(0, eq).trim();
+      let value = line.slice(eq + 1).trim();
+      if (value.length >= 2 && ((value[0] === '"' && value[value.length - 1] === '"') ||
+        (value[0] === '\'' && value[value.length - 1] === '\''))) {
+        value = value.slice(1, -1);
+      }
+      if (key && !(key in process.env)) process.env[key] = value;
+    }
+  } catch (_err) {
+    // .env is optional; environment variables remain the source of truth.
+  }
+}
+loadEnvFile();
 
 function asInt(value, fallback) {
   if (value === undefined || value === '') return fallback;
